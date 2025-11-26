@@ -31,16 +31,14 @@ with col1:
 
 # MYSQL CONNECTION
 try:
-    conn = mysql.connector.connect(
-        host="ccscloud.dlsu.edu.ph",
-        port=node_ports[node_choice],
-        user="user",
-        password="nGERH3tcswdCpXr7vTYFDB4M",
-        database=database
-    )
-    cursor = conn.cursor()
-    cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state.isolation_level}")
-    st.success("Connected to MySQL successfully.")
+    conn = connect_node(node_choice)  
+    if conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state.isolation_level}")
+        st.success("Connected to MySQL successfully.")
+    else:
+        st.error("Failed to connect to MySQL.")
+        conn = None
 except Exception as e:
     st.error(f"Failed to connect to MySQL: {e}")
     conn = None
