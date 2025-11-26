@@ -1,9 +1,9 @@
 import mysql.connector
 
 nodes = {
-    "Node0": {"host": "ccscloud.dlsu.edu.ph", "port": 60793, "user": "user", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "YOUR_DATABASE"},
-    "Node1": {"host": "ccscloud.dlsu.edu.ph", "port": 60794, "user": "user", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "YOUR_DATABASE"},
-    "Node2": {"host": "ccscloud.dlsu.edu.ph", "port": 60795, "user": "user", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "YOUR_DATABASE"},
+    "Node0": {"host": "ccscloud.dlsu.edu.ph", "port": 60793, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db"},
+    "Node1": {"host": "ccscloud.dlsu.edu.ph", "port": 60794, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
+    "Node2": {"host": "ccscloud.dlsu.edu.ph", "port": 60795, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db3"},
 }
 
 def connect_node(node_name):
