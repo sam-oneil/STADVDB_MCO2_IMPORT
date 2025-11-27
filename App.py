@@ -28,6 +28,9 @@ with left_col:
     if st.button("Confirm", type = "primary", width = "stretch"):
         if conn:
             isolation_choice = selected_level
+            cursor = conn.cursor()
+            cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {isolation_choice}")
+            cursor.close()
             st.success(f"Isolation level confirmed: {isolation_choice}")
         else:
             st.error("No connection to Node 1")
@@ -46,14 +49,14 @@ with right_col:
              
     with col2:
         st.markdown("<h3 style='text-align: center;'>Update Title</h3>", unsafe_allow_html=True) 
-        upd_id = st.number_input("ID", step=1, key="upd_id")
+        upd_id = st.text_input("ID", key="upd_id")
         upd_title = st.text_input("Title", key="upd_title")
         upd_year = st.number_input("Year", min_value=1900, max_value=2100, step=1, key="upd_year")
         upd_genre = st.text_input("Genre", key="upd_genre")
         
     with col3:
         st.markdown("<h3 style='text-align: center;'>Delete Title</h3>", unsafe_allow_html=True) 
-        del_id = st.number_input("ID", step=1, key="del_id")
+        del_id = st.text_input("ID", key="del_id")
         
     col1, col2, col3 = st.columns(3, gap="large")
 
@@ -63,6 +66,23 @@ with right_col:
                 if conn:
                     if add_title != "":
                         #insert logic here
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT tconst FROM titles ORDER BY tconst DESC LIMIT 1")
+                        row = cursor.fetchone()
+
+                        if row:
+                            last_id = row[0]
+                            num_part = int(last_id[2:]) + 1
+                            new_tconst = "tt"+str(num_part).zfill(7)
+                        else:
+                            new_id = 'tt0000001'
+
+                        sql = "INSERT INTO titles (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                        val = (new_tconst, "movie", add_title, add_title, 0, add_year, "\\N", add_genre)
+                        cursor.execute(sql, val)
+                        conn.commit()
+                        cursor.close()
+
                         st.success(f"'{add_title}' added successfully")
                     else:
                         st.error("Title cannot be empty")
@@ -75,10 +95,19 @@ with right_col:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
                 if conn:
-                    if upd_id <= 0:
-                        st.error("ID must be greater than 0")
+                    if upd_id.strip() == "":
+                        st.error("tconst cannot be empty")
                     elif upd_title != "" and upd_year != 0 and upd_genre != "":
                         #insert logic here
+                        cursor = conn.cursor()
+
+                        sql = "UPDATE titles SET primaryTitle = %s, startYear = %s, genres = %s WHERE tconst = %s"
+                        val = (upd_title, upd_year, upd_genre, upd_id)
+                        cursor.execute(sql, val)
+                        conn.commit()
+
+                        cursor.close()
+
                         st.success(f"'{upd_title}' updated successfully")
                     else:
                         st.error("At least one must be filled")
@@ -91,10 +120,18 @@ with right_col:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
                 if conn:
-                    if del_id <= 0:
-                        st.error("ID must be greater than 0")
+                    if del_id.strip() == "":
+                        st.error("tconst cannot be empty")
                     else:
                         #insert logic here
+                        cursor = conn.cursor()
+
+                        sql = "DELETE FROM titles WHERE tconst = %s"
+                        cursor.execute(sql, (del_id,))
+                        conn.commit()
+
+                        cursor.close()
+
                         st.success(f"Movie with ID {del_id} deleted")
                 else:
                     st.error("No connection to Node 1")
