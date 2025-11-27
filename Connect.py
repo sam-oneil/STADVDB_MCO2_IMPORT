@@ -1,26 +1,40 @@
 import mysql.connector
 
+# --- DB Credentials ---
+USER = "dbuser"
+PASSWORD = "nGERH3tcswdCpXr7vTYFDB4M"
+
+# --- Node Configurations ---
 nodes = {
-    "Node0": {"host": "ccscloud.dlsu.edu.ph", "port": 60793, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db"},
-    "Node1": {"host": "ccscloud.dlsu.edu.ph", "port": 60794, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
-    "Node2": {"host": "ccscloud.dlsu.edu.ph", "port": 60795, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db3"},
+    "Node 1": {"host": "ccscloud.dlsu.edu.ph", "port": 60793, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db"},
+    "Node 2": {"host": "ccscloud.dlsu.edu.ph", "port": 60794, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
+    "Node 3": {"host": "ccscloud.dlsu.edu.ph", "port": 60795, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db3"},
 }
 
-def connect_node(node_name):
-    try:
-        config = nodes[node_name]
-        conn = mysql.connector.connect(
-            host=config["host"],
-            port=config["port"],
-            user=config["user"],
-            password=config["password"],
-            database=config["database"]
-        )
-        return conn
-    except Exception as e:
-        print(f"Connection Error to {node_name}: {e}")
-        return None
+# --- Node Connector ---
+def connect_node(nodes):
+    connections = {}
+    ping_results = {}
 
+    for node_name, node_info in nodes.items():
+        try:
+            conn = mysql.connector.connect(
+                host=node_info["host"],
+                port=node_info["port"],
+                user=node_info["user"],      # use user from nodes dict
+                password=node_info["password"],
+                database=node_info["database"],
+                connection_timeout=3
+            )
+            connections[node_name] = conn
+            ping_results[node_name] = "Reachable"
+        except mysql.connector.Error:
+            connections[node_name] = None
+            ping_results[node_name] = "Unreachable"
+
+    return connections, ping_results
+
+# --- Replication Function ---
 def replicate_update(source_node, target_nodes, sql):
     success, failure = [], []
     for node in target_nodes:
