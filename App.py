@@ -39,6 +39,34 @@ with right_col:
     # --- CRUD Operations ---
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
 
+    if "id" not in st.session_state:
+       st.session_state["id"] = None
+
+    def show_surrounding_rows(conn, tconst):
+        try:
+            cursor = conn.cursor(dictionary=True)
+
+            num = int(tconst[2:])
+            lower = "tt" + str(max(num - 5, 1)).zfill(7)
+            upper = "tt" + str(num + 5).zfill(7)
+
+            query = """
+                SELECT *
+                FROM titles
+                WHERE tconst BETWEEN %s AND %s
+                ORDER BY tconst
+            """
+            cursor.execute(query, (lower, upper))
+            rows = cursor.fetchall()
+            cursor.close()
+
+            st.subheader("UPDATED DATABASE")
+            st.dataframe(rows)
+
+        except Exception as e:
+            st.error(f"Failed loading surrounding rows: {e}")
+
+
     col1, col2, col3 = st.columns(3, gap="large")
     
     with col1:
@@ -65,7 +93,6 @@ with right_col:
             try:
                 if conn:
                     if add_title != "":
-                        #insert logic here
                         cursor = conn.cursor()
                         cursor.execute("SELECT tconst FROM titles ORDER BY tconst DESC LIMIT 1")
                         row = cursor.fetchone()
@@ -84,6 +111,7 @@ with right_col:
                         cursor.close()
 
                         st.success(f"'{add_title}' added successfully")
+                        st.session_state["id"] = new_tconst
                     else:
                         st.error("Title cannot be empty")
                 else:
@@ -97,18 +125,33 @@ with right_col:
                 if conn:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
-                    elif upd_title != "" and upd_year != 0 and upd_genre != "":
-                        #insert logic here
-                        cursor = conn.cursor()
+                    elif upd_title != "" or upd_year != 0 or upd_genre != "":
+                        if upd_title != "":
+                            cursor = conn.cursor()
+                            sql = "UPDATE titles SET primaryTitle = %s WHERE tconst = %s"
+                            val = (upd_title, upd_id)
+                            cursor.execute(sql, val)
+                            conn.commit()
+                            cursor.close()
 
-                        sql = "UPDATE titles SET primaryTitle = %s, startYear = %s, genres = %s WHERE tconst = %s"
-                        val = (upd_title, upd_year, upd_genre, upd_id)
-                        cursor.execute(sql, val)
-                        conn.commit()
+                        if upd_year != 0:
+                            cursor = conn.cursor()
+                            sql = "UPDATE titles SET startYear = %s WHERE tconst = %s"
+                            val = (upd_year, upd_id)
+                            cursor.execute(sql, val)
+                            conn.commit()
+                            cursor.close()
 
-                        cursor.close()
+                        if upd_genre != "":
+                            cursor = conn.cursor()
+                            sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
+                            val = (upd_genre, upd_id)
+                            cursor.execute(sql, val)
+                            conn.commit()
+                            cursor.close()
 
-                        st.success(f"'{upd_title}' updated successfully")
+                        st.success(f"'{upd_id}' updated successfully")
+                        st.session_state["id"] = upd_id
                     else:
                         st.error("At least one must be filled")
                 else:
@@ -123,9 +166,7 @@ with right_col:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
-                        #insert logic here
                         cursor = conn.cursor()
-
                         sql = "DELETE FROM titles WHERE tconst = %s"
                         cursor.execute(sql, (del_id,))
                         conn.commit()
@@ -133,7 +174,11 @@ with right_col:
                         cursor.close()
 
                         st.success(f"Movie with ID {del_id} deleted")
+                        st.session_state["id"] = del_id
                 else:
                     st.error("No connection to Node 1")
             except Exception as e:
                 st.error(f"Delete failed: {e}")
+
+if st.session_state["id"]:
+    show_surrounding_rows(conn, st.session_state["id"])
