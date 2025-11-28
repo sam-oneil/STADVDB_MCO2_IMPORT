@@ -39,13 +39,25 @@ with left_col:
     if st.button("Confirm", type = "primary", width = "stretch"):
         if conn:
             st.session_state["iso_level"] = selected_level
-            st.success(f"Isolation level confirmed: {selected_level}")
+            st.success(f"Isolation level confirmed: {st.session_state["iso_level"]}")
         else:
             st.error("No connection to Node 1")
 
 with right_col:
     # --- CRUD Operations ---
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
+
+    # --- Helper Functions ---
+    def start_transaction(conn):
+        """Start a new transaction if none is active."""
+        if not st.session_state["in_transaction"]:
+            cursor = conn.cursor()
+            cursor.execute("SET AUTOCOMMIT = 0")
+            cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+            cursor.execute("START TRANSACTION")
+            cursor.close()
+
+            st.session_state["in_transaction"] = True
 
     def show_surrounding_rows(conn, tconst):
         try:
@@ -70,22 +82,6 @@ with right_col:
 
         except Exception as e:
             st.error(f"Failed loading surrounding rows: {e}")
-
-    # --- Start Transaction ---
-    if not st.session_state["in_transaction"]:
-        if st.button("Start Transaction", type = "primary", width = "stretch"):
-            try:
-                cursor = conn.cursor()
-                cursor.execute("SET AUTOCOMMIT = 0")
-                cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-                cursor.execute("START TRANSACTION")
-                cursor.close()
-
-                st.session_state["in_transaction"] = True
-                st.success("Transaction started")
-            
-            except Exception as e:
-                st.error(f"Failed to start transaction: {e}")
 
     col1, col2, col3 = st.columns(3, gap="large")
     
@@ -113,6 +109,8 @@ with right_col:
             try:
                 if conn:
                     if add_title != "":
+                        start_transaction(conn)    
+                    
                         cursor = conn.cursor()
                         cursor.execute("SELECT tconst FROM titles ORDER BY tconst DESC LIMIT 1")
                         row = cursor.fetchone()
@@ -127,9 +125,6 @@ with right_col:
                         sql = "INSERT INTO titles (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                         val = (new_tconst, "movie", add_title, add_title, 0, add_year, "\\N", add_genre)
                         cursor.execute(sql, val)
-                        
-                        if not st.session_state["in_transaction"]:
-                            conn.commit()
 
                         cursor.close()
 
@@ -149,6 +144,8 @@ with right_col:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
                     elif upd_title != "" or upd_year != 0 or upd_genre != "":
+                        start_transaction(conn)
+
                         cursor = conn.cursor()
 
                         if upd_title != "":
@@ -165,9 +162,6 @@ with right_col:
                             sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
                             val = (upd_genre, upd_id)
                             cursor.execute(sql, val)
-
-                        if not st.session_state["in_transaction"]:
-                            conn.commit()
 
                         cursor.close()
 
@@ -187,12 +181,11 @@ with right_col:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
+                        start_transaction(conn)
+
                         cursor = conn.cursor()
                         sql = "DELETE FROM titles WHERE tconst = %s"
                         cursor.execute(sql, (del_id,))
-                        
-                        if not st.session_state["in_transaction"]:
-                            conn.commit()
 
                         cursor.close()
 
@@ -203,27 +196,33 @@ with right_col:
             except Exception as e:
                 st.error(f"Delete failed: {e}")
 
-    # --- Commit / Rollback ---
-    st.write("")
-    st.write("")
-    col4, col5 = st.columns(2, gap="large")
-    with col4:
-        if st.button("Commit", use_container_width=True):
-            if st.session_state["in_transaction"]:
-                conn.commit()
-                st.session_state["in_transaction"] = False
-                st.success("Transaction committed")
-            else:
-                st.error("No active transaction to commit")
-
-    with col5:
-        if st.button("Rollback", use_container_width=True):
-            if st.session_state["in_transaction"]:
-                conn.rollback()
-                st.session_state["in_transaction"] = False
-                st.success("Transaction rolled back")
-            else:
-                st.error("No active transaction to rollback")
-
 if st.session_state["id"]:
     show_surrounding_rows(conn, st.session_state["id"])
+
+# --- Commit / Rollback ---
+if st.session_state["in_transaction"]:
+    col4, col5 = st.columns(2, gap="large")
+
+    clicked_commit = False
+    clicked_rollback = False
+
+    with col4:
+        if st.button("Confirm", key="txn_confirm", type="primary", use_container_width=True):
+            clicked_commit = True
+
+    with col5:
+        if st.button("Cancel", key="txn_rollback", use_container_width=True):
+            clicked_rollback = True
+
+    if clicked_commit:
+        conn.commit()
+        st.session_state["in_transaction"] = False
+        st.success("Transaction committed!")
+        st.rerun()  
+
+    if clicked_rollback:
+        conn.rollback()
+        st.session_state["in_transaction"] = False
+        st.warning("Transaction rolled back!")
+        st.rerun()
+
