@@ -76,6 +76,31 @@ with right_col:
 
             st.session_state["in_transaction"] = True
 
+    def get_row_by_tconst(conn, tconst):
+        try:
+            cursor = conn.cursor(dictionary=True)
+            query = "SELECT * FROM titles WHERE tconst = %s"
+            cursor.execute(query, (tconst,))
+            row = cursor.fetchone()
+            cursor.close()
+            return row
+        except Exception as e:
+            st.error(f"Failed to fetch row: {e}")
+            return None
+        
+    def get_nodes_from_title(title: str) -> list:
+        if not title or not title.strip():
+            return ["Node 1"]
+        
+        first_char = title.strip()[0].upper()
+        if 'A' <= first_char <= 'M':
+            return ['Node 1', 'Node 2']
+        else:
+            return ['Node 1', 'Node 3']
+        
+    def is_title_in_node(title: str, curr_node: str) -> bool:
+        return curr_node in get_nodes_from_title(title)
+    
     def show_surrounding_rows(conn, tconst):
         try:
             cursor = conn.cursor(dictionary=True)
@@ -107,17 +132,11 @@ with right_col:
     if st.button("Search", type = "secondary"):
         if conn and search_term.strip() != "":
             try:
-                cursor = conn.cursor(dictionary=True)
-                query = "SELECT * FROM titles WHERE tconst = %s"
-                cursor.execute(query, (search_term,))
-                row = cursor.fetchall()
-                cursor.close()
-
+                row = get_row_by_tconst(conn, search_term.strip())
                 if row:
-                    st.table(row)
+                    st.dataframe([row])
                 else:
-                    st.info(f"No record found with tconst: {search_term}")
-
+                    st.warning(f"No record found with ID {search_term.strip()}")
             except Exception as e:
                 st.error(f"Search failed: {e}")
 
@@ -146,7 +165,7 @@ with right_col:
         if st.button("Add", type = "primary", width = "stretch"):
             try:
                 if conn:
-                    if add_title != "":
+                    if add_title != "" and is_title_in_node(add_title, curr_node):
                         start_transaction(conn)    
                     
                         cursor = conn.cursor()
@@ -168,10 +187,12 @@ with right_col:
 
                         st.success(f"'{add_title}' added successfully")
                         st.session_state["id"] = new_tconst
+                    elif add_title != "":
+                        st.error(f"Title '{add_title}' does not belong to {curr_node}.")
                     else:
                         st.error("Title cannot be empty")
                 else:
-                    st.error("No connection to Node 1")
+                    st.error(f"No connection to {curr_node}.")
             except Exception as e:
                 st.error(f"Add failed: {e}")
     
@@ -181,34 +202,44 @@ with right_col:
                 if conn:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
-                    elif upd_title != "" or upd_year != 0 or upd_genre != "":
-                        start_transaction(conn)
+                    else: 
+                        row = get_row_by_tconst(conn, upd_id.strip()) # Check if record exists in the node
+                        if not row:
+                            st.error(f"No record found with ID {upd_id.strip()}")
+                        
+                        elif upd_title != "" or upd_year != 0 or upd_genre != "":
+                            effective_title = upd_title if upd_title != "" else row["primaryTitle"]
 
-                        cursor = conn.cursor()
+                            if not is_title_in_node(effective_title, curr_node):
+                                st.error(f"Title '{effective_title}' does not belong to {curr_node}.")
+                            else:
+                                start_transaction(conn)
 
-                        if upd_title != "":
-                            sql = "UPDATE titles SET primaryTitle = %s WHERE tconst = %s"
-                            val = (upd_title, upd_id)
-                            cursor.execute(sql, val)
+                                cursor = conn.cursor()
 
-                        if upd_year != 0:
-                            sql = "UPDATE titles SET startYear = %s WHERE tconst = %s"
-                            val = (upd_year, upd_id)
-                            cursor.execute(sql, val)
+                                if upd_title != "":
+                                    sql = "UPDATE titles SET primaryTitle = %s WHERE tconst = %s"
+                                    val = (upd_title, upd_id)
+                                    cursor.execute(sql, val)
 
-                        if upd_genre != "":
-                            sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
-                            val = (upd_genre, upd_id)
-                            cursor.execute(sql, val)
+                                if upd_year != 0:
+                                    sql = "UPDATE titles SET startYear = %s WHERE tconst = %s"
+                                    val = (upd_year, upd_id)
+                                    cursor.execute(sql, val)
 
-                        cursor.close()
+                                if upd_genre != "":
+                                    sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
+                                    val = (upd_genre, upd_id)
+                                    cursor.execute(sql, val)
 
-                        st.success(f"'{upd_id}' updated successfully")
-                        st.session_state["id"] = upd_id
-                    else:
-                        st.error("At least one must be filled")
+                                cursor.close()
+
+                                st.success(f"'{upd_id}' updated successfully")
+                                st.session_state["id"] = upd_id
+                        else:
+                            st.error("At least one must be filled")
                 else:
-                    st.error("No connection to Node 1")
+                    st.error(f"No connection to {curr_node}")
             except Exception as e:
                 st.error(f"Update failed: {e}")
 
@@ -219,18 +250,22 @@ with right_col:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
-                        start_transaction(conn)
+                        row = get_row_by_tconst(conn, del_id.strip())
+                        if not row:
+                            st.error(f"No record found with ID {del_id.strip()}")
+                        else:
+                            start_transaction(conn)
 
-                        cursor = conn.cursor()
-                        sql = "DELETE FROM titles WHERE tconst = %s"
-                        cursor.execute(sql, (del_id,))
+                            cursor = conn.cursor()
+                            sql = "DELETE FROM titles WHERE tconst = %s"
+                            cursor.execute(sql, (del_id,))
 
-                        cursor.close()
+                            cursor.close()
 
-                        st.success(f"Movie with ID {del_id} deleted")
-                        st.session_state["id"] = del_id
+                            st.success(f"Movie with ID {del_id} deleted")
+                            st.session_state["id"] = del_id
                 else:
-                    st.error("No connection to Node 1")
+                    st.error(f"No connection to {curr_node}")
             except Exception as e:
                 st.error(f"Delete failed: {e}")
 
