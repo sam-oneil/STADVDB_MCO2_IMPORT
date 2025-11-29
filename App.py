@@ -168,16 +168,30 @@ with right_col:
                     if add_title != "" and is_title_in_node(add_title, curr_node):
                         start_transaction(conn)    
                     
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT tconst FROM titles ORDER BY tconst DESC LIMIT 1")
-                        row = cursor.fetchone()
+                        RANGES = {
+                            "Node 1": (1, 999_999),
+                            "Node 2": (1_000_000, 1_999_999),
+                            "Node 3": (2_000_000, 2_999_999)
+                        }
 
-                        if row:
-                            last_id = row[0]
-                            num_part = int(last_id[2:]) + 1
-                            new_tconst = "tt"+str(num_part).zfill(7)
+                        min_id, max_id = RANGES[curr_node]
+
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            SELECT MAX(CAST(SUBSTRING(tconst, 3) AS UNSIGNED)) 
+                            FROM titles 
+                            WHERE CAST(SUBSTRING(tconst, 3) AS UNSIGNED) BETWEEN %s AND %s
+                        """, (min_id, max_id))
+                        result = cursor.fetchone()
+                        cursor.close()
+
+                        last_num = result[0] if result[0] else (min_id - 1)
+                        new_num = last_num + 1
+
+                        if new_num > max_id:
+                            st.error("ID range exhausted for this node!")
                         else:
-                            new_tconst = 'tt0000001'
+                            new_tconst = "tt" + str(new_num).zfill(7)
 
                         sql = "INSERT INTO titles (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                         val = (new_tconst, "movie", add_title, add_title, 0, add_year, "\\N", add_genre)
