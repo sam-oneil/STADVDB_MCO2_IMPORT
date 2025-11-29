@@ -6,9 +6,9 @@ PASSWORD = "nGERH3tcswdCpXr7vTYFDB4M"
 
 # --- Node Configurations ---
 nodes = {
-    "Node 1": {"host": "ccscloud.dlsu.edu.ph", "port": 60793, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db"},
-    "Node 2": {"host": "ccscloud.dlsu.edu.ph", "port": 60794, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
-    "Node 3": {"host": "ccscloud.dlsu.edu.ph", "port": 60795, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db3"},
+    "Node 1": {"host": "10.2.14.93", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db"},
+    "Node 2": {"host": "10.2.14.94", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
+    "Node 3": {"host": "10.2.14.95", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db3"},
 }
 
 # --- Node Connector ---
