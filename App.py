@@ -115,7 +115,7 @@ with right_col:
 
                 if row:
                     st.subheader("SEARCH RESULT")
-                    st.json(row)
+                    st.dataframe(row)
                 else:
                     st.info(f"No record found with tconst: {search_term}")
 
