@@ -56,7 +56,7 @@ with left_col:
     if st.button("Confirm", type = "primary", width = "stretch"):
         if conn:
             st.session_state["iso_level"] = selected_level
-            st.success(f"Isolation level confirmed: {st.session_state["iso_level"]}")
+            st.success(f"Isolation level confirmed: {st.session_state['iso_level']}")
         else:
             st.error("No connection to Node 1")
 
