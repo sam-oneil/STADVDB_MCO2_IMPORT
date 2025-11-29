@@ -18,6 +18,8 @@ st.markdown("<h1 style='text-align: center;'>Distributed Database Management Sys
 if curr_node == "Unknown Node":
     st.error("This application must be run on one of the designated nodes.")
     st.stop()
+else:
+    st.success(f"Running on {curr_node}")
 
 # --- Session State Initialization ---
 if "in_transaction" not in st.session_state:
