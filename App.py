@@ -129,14 +129,17 @@ with right_col:
 
     search_term = st.text_input("Enter Title ID (tconst):", key="search_term")
 
-    if st.button("Search", type = "secondary"):
+    if st.button("Search", type = "primary"):
         if conn and search_term.strip() != "":
             try:
                 row = get_row_by_tconst(conn, search_term.strip())
                 if row:
+                    start_transaction(conn)
                     st.dataframe([row])
                 else:
                     st.warning(f"No record found with ID {search_term.strip()}")
+                    
+                st.session_state["in_transaction"] = False
             except Exception as e:
                 st.error(f"Search failed: {e}")
 
