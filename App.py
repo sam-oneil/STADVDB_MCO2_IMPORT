@@ -1,8 +1,23 @@
 import streamlit as st
+import socket
 from Connect import *
+
+# --- Node Definitions ---
+curr_host = socket.gethostname()
+host_node = {
+    "STADVDB31-Server0": "Node 1",
+    "STADVDB31-Server1": "Node 2",
+    "STADVDB31-Server2": "Node 3"
+}
+
+curr_node = host_node.get(curr_host, "Unknown Node")
 
 st.set_page_config(layout="wide")
 st.markdown("<h1 style='text-align: center;'>Distributed Database Management System</h1>", unsafe_allow_html=True)
+
+if curr_node == "Unknown Node":
+    st.error("This application must be run on one of the designated nodes.")
+    st.stop()
 
 # --- Session State Initialization ---
 if "in_transaction" not in st.session_state:
@@ -19,7 +34,7 @@ left_col, right_col = st.columns([1, 2], gap="large")
 with left_col:
     # --- Node Status ---
     connections, ping_results = connect_node(nodes)
-    conn = connections["Node 1"]  # Main connection
+    conn = connections[curr_node] 
 
     st.header("NODE STATUS")
     cols = st.columns(len(nodes), gap="large")
