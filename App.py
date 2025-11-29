@@ -114,8 +114,7 @@ with right_col:
                 cursor.close()
 
                 if row:
-                    st.subheader("SEARCH RESULT")
-                    st.dataframe(row)
+                    st.table(row)
                 else:
                     st.info(f"No record found with tconst: {search_term}")
 
