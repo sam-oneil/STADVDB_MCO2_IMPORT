@@ -99,6 +99,28 @@ with right_col:
 
         except Exception as e:
             st.error(f"Failed loading surrounding rows: {e}")
+    
+    st.markdown("<h3 style='text-align: center;'> Search Title </h2>", unsafe_allow_html=True)
+
+    search_term = st.text_input("Enter Title ID (tconst):", key="search_term")
+
+    if st.button("Search", type = "secondary"):
+        if conn and search_term.strip() != "":
+            try:
+                cursor = conn.cursor(dictionary=True)
+                query = "SELECT * FROM titles WHERE tconst = %s"
+                cursor.execute(query, (search_term,))
+                row = cursor.fetchall()
+                cursor.close()
+
+                if row:
+                    st.subheader("SEARCH RESULT")
+                    st.json(row)
+                else:
+                    st.info(f"No record found with tconst: {search_term}")
+
+            except Exception as e:
+                st.error(f"Search failed: {e}")
 
     col1, col2, col3 = st.columns(3, gap="large")
     
