@@ -93,13 +93,32 @@ with left_col:
 
     # --- Replication Log ---
     st.header("REPLICATION LOG")
-    conn_debug = new_conn(curr_node)
-    cursor = conn_debug.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM replication_log ORDER BY id DESC LIMIT 10")
-    rows = cursor.fetchall()
+
+    def fetch_replication_log(conn, limit=10):
+        """Fetch the latest replication log entries."""
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(f"SELECT * FROM replication_log ORDER BY id DESC LIMIT {limit}")
+        rows = cursor.fetchall()
+        cursor.close()
+        return rows
+
+    # Use current transaction connection if a transaction is active
+    if st.session_state.get("in_transaction", False) and st.session_state.get("txn_conn"):
+        conn_debug = st.session_state["txn_conn"]
+        rows = fetch_replication_log(conn_debug)
+        # Mark as uncommitted
+        for row in rows:
+            row["status"] = "Uncommitted"
+    else:
+        conn_debug = new_conn(curr_node)
+        rows = fetch_replication_log(conn_debug)
+        # Mark as committed
+        for row in rows:
+            row["status"] = "Committed"
+        conn_debug.close()
+
+    # Show the replication log in a dataframe
     st.dataframe(rows)
-    cursor.close()
-    conn_debug.close()
 
     # --- Retry Pending Replications ---
     st.header("PENDING REPLICATIONS")
