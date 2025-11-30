@@ -35,6 +35,33 @@ if "iso_level" not in st.session_state:
 if "txn_conn" not in st.session_state:
     st.session_state["txn_conn"] = None
 
+# --- Helper Functions ---
+def new_conn(curr_node):
+    cfg = nodes[curr_node]
+    return mysql.connector.connect(
+        host=cfg["host"],
+        port=cfg["port"],
+        user=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"]
+    )
+
+def get_conn(curr_node):
+    if st.session_state["in_transaction"]:
+        return st.session_state["txn_conn"]
+    else:
+        conn = new_conn(curr_node)
+        cursor = conn.cursor()
+
+        cursor.execute("SET AUTOCOMMIT = 0")
+        cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+        cursor.execute("START TRANSACTION")
+        cursor.close()
+
+        st.session_state["in_transaction"] = True
+        st.session_state["txn_conn"] = conn
+        return conn
+    
 left_col, right_col = st.columns([1, 2], gap="large")
 
 with left_col:
@@ -53,7 +80,7 @@ with left_col:
                 st.error("● Unreachable")
 
     # --- Replication Log ---
-    st.header("REPLICATION LOG")
+    st.header("Replication Log")
     conn_debug = new_conn(curr_node)
     cursor = conn_debug.cursor(dictionary=True)
     cursor.execute("SELECT * FROM replication_log ORDER BY id DESC LIMIT 10")
@@ -102,31 +129,6 @@ with right_col:
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
 
     # --- Helper Functions ---
-    def new_conn(curr_node):
-        cfg = nodes[curr_node]
-        return mysql.connector.connect(
-            host=cfg["host"],
-            port=cfg["port"],
-            user=cfg["user"],
-            password=cfg["password"],
-            database=cfg["database"]
-        )
-
-    def get_conn(curr_node):
-        if st.session_state["in_transaction"]:
-            return st.session_state["txn_conn"]
-        else:
-            conn = new_conn(curr_node)
-            cursor = conn.cursor()
-
-            cursor.execute("SET AUTOCOMMIT = 0")
-            cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-            cursor.execute("START TRANSACTION")
-            cursor.close()
-
-            st.session_state["in_transaction"] = True
-            st.session_state["txn_conn"] = conn
-            return conn
 
     def get_row_by_tconst(tconst):
         try:
