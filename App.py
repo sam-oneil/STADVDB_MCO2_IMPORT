@@ -84,7 +84,7 @@ with right_col:
         else:
             conn = new_conn(curr_node)
             cursor = conn.cursor()
-            
+
             cursor.execute("SET AUTOCOMMIT = 0")
             cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
             cursor.execute("START TRANSACTION")
@@ -92,6 +92,7 @@ with right_col:
 
             st.session_state["in_transaction"] = True
             st.session_state["txn_conn"] = conn
+            return conn
 
     def get_row_by_tconst(tconst):
         try:
@@ -253,10 +254,6 @@ with right_col:
                             else:
                                 cursor = conn.cursor()
 
-                                cursor.execute("SET autocommit = 0")
-                                cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-                                cursor.execute("START TRANSACTION")
-
                                 if upd_title != "":
                                     sql = "UPDATE titles SET primaryTitle = %s WHERE tconst = %s"
                                     val = (upd_title, upd_id)
@@ -297,10 +294,6 @@ with right_col:
                             st.error(f"No record found with ID {del_id.strip()}")
                         else:
                             cursor = conn.cursor()
-
-                            cursor.execute("SET autocommit = 0")
-                            cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-                            cursor.execute("START TRANSACTION")
                             
                             sql = "DELETE FROM titles WHERE tconst = %s"
                             cursor.execute(sql, (del_id,))
