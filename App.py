@@ -77,11 +77,14 @@ with right_col:
             password=cfg["password"],
             database=cfg["database"]
         )
-    
-    def start_transaction():
-        if not st.session_state["in_transaction"]:
+
+    def get_conn(curr_node):
+        if st.session_state["in_transaction"]:
+            return st.session_state["txn_conn"]
+        else:
             conn = new_conn(curr_node)
             cursor = conn.cursor()
+            
             cursor.execute("SET AUTOCOMMIT = 0")
             cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
             cursor.execute("START TRANSACTION")
@@ -186,12 +189,8 @@ with right_col:
                 st.error(f"Title '{add_title}' does not belong to {curr_node}.")
             else:
                 try:
-                    conn = new_conn(curr_node)
+                    conn = get_conn(curr_node)
                     cursor = conn.cursor()
-
-                    cursor.execute("SET autocommit = 0")
-                    cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-                    cursor.execute("START TRANSACTION")
 
                     RANGES = {
                         "Node 1": (1, 999_999),
@@ -237,7 +236,7 @@ with right_col:
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
-                conn = new_conn(curr_node)
+                conn = get_conn(curr_node)
                 if conn:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
@@ -288,7 +287,7 @@ with right_col:
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
-                conn = new_conn(curr_node)
+                conn = get_conn(curr_node)
                 if conn:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
