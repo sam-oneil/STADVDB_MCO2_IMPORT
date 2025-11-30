@@ -68,9 +68,19 @@ with right_col:
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
 
     # --- Helper Functions ---
+    def new_conn(curr_node):
+        cfg = nodes[curr_node]
+        return mysql.connector.connect(
+            host=cfg["host"],
+            port=cfg["port"],
+            user=cfg["user"],
+            password=cfg["password"],
+            database=cfg["database"]
+        )
+    
     def start_transaction():
         if not st.session_state["in_transaction"]:
-            conn = connections[curr_node]
+            conn = new_conn(curr_node)
             cursor = conn.cursor()
             cursor.execute("SET AUTOCOMMIT = 0")
             cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
@@ -82,7 +92,7 @@ with right_col:
 
     def get_row_by_tconst(tconst):
         try:
-            conn = connections[curr_node]
+            conn = new_conn(curr_node)
             cursor = conn.cursor(dictionary=True)
 
             query = "SELECT * FROM titles WHERE tconst = %s"
@@ -110,7 +120,7 @@ with right_col:
     
     def show_surrounding_rows(tconst):
         try:
-            conn = connections[curr_node]
+            conn = new_conn(curr_node)
             cursor = conn.cursor(dictionary=True)
 
             num = int(tconst[2:])
@@ -170,59 +180,66 @@ with right_col:
     col1, col2, col3 = st.columns(3, gap="large")
 
     with col1:
-        if st.button("Add", type = "primary", width = "stretch"):
-            try:
-                if connections[curr_node]:
-                    if add_title != "" and is_title_in_node(add_title, curr_node):
-                        start_transaction()    
-                        conn = st.session_state["txn_conn"]
+        if st.button("Add", type="primary", use_container_width=True):
+            if add_title == "":
+                st.error("Title cannot be empty.")
+            elif not is_title_in_node(add_title, curr_node):
+                st.error(f"Title '{add_title}' does not belong to {curr_node}.")
+            else:
+                try:
+                    conn = new_conn(curr_node)
+                    cursor = conn.cursor()
 
-                        RANGES = {
-                            "Node 1": (1, 999_999),
-                            "Node 2": (1_000_000, 1_999_999),
-                            "Node 3": (2_000_000, 2_999_999)
-                        }
+                    cursor.execute("SET autocommit = 0")
+                    cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+                    cursor.execute("START TRANSACTION")
 
-                        min_id, max_id = RANGES[curr_node]
+                    RANGES = {
+                        "Node 1": (1, 999_999),
+                        "Node 2": (1_000_000, 1_999_999),
+                        "Node 3": (2_000_000, 2_999_999)
+                    }
+                    min_id, max_id = RANGES[curr_node]
 
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            SELECT MAX(CAST(SUBSTRING(tconst, 3) AS UNSIGNED)) 
-                            FROM titles 
-                            WHERE CAST(SUBSTRING(tconst, 3) AS UNSIGNED) BETWEEN %s AND %s
-                        """, (min_id, max_id))
-                        result = cursor.fetchone()
-                        cursor.close()
+                    cursor.execute("""
+                        SELECT MAX(CAST(SUBSTRING(tconst, 3) AS UNSIGNED)) 
+                        FROM titles 
+                        WHERE CAST(SUBSTRING(tconst, 3) AS UNSIGNED) BETWEEN %s AND %s
+                    """, (min_id, max_id))
 
-                        last_num = result[0] if result[0] else (min_id - 1)
-                        new_num = last_num + 1
+                    result = cursor.fetchone()
+                    last_num = result[0] if result[0] else (min_id - 1)
+                    new_num = last_num + 1
 
-                        if new_num > max_id:
-                            st.error("ID range exhausted for this node!")
-                        else:
-                            new_tconst = "tt" + str(new_num).zfill(7)
+                    if new_num > max_id:
+                        st.error("ID range exhausted for this node!")
+                        conn.close()
+                    else:
+                        new_tconst = "tt" + str(new_num).zfill(7)
 
-                        sql = "INSERT INTO titles (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                        sql = """
+                            INSERT INTO titles 
+                            (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """
                         val = (new_tconst, "movie", add_title, add_title, 0, add_year, "\\N", add_genre)
+
                         cursor.execute(sql, val)
 
-                        cursor.close()
+                        st.session_state["txn_conn"] = conn
+                        st.session_state["in_transaction"] = True
+                        st.session_state["id"] = new_tconst
 
                         st.success(f"'{add_title}' added successfully with ID {new_tconst}")
-                        st.session_state["id"] = new_tconst
-                    elif add_title != "":
-                        st.error(f"Title '{add_title}' does not belong to {curr_node}.")
-                    else:
-                        st.error("Title cannot be empty")
-                else:
-                    st.error(f"No connection to {curr_node}.")
-            except Exception as e:
-                st.error(f"Add failed: {e}")
+
+                except Exception as e:
+                    st.error(f"Add failed: {e}")
     
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
-                if connections[curr_node]:
+                conn = new_conn(curr_node)
+                if conn:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else: 
@@ -236,10 +253,11 @@ with right_col:
                             if not is_title_in_node(effective_title, curr_node):
                                 st.error(f"Title '{effective_title}' does not belong to {curr_node}.")
                             else:
-                                start_transaction()
-                                conn = st.session_state["txn_conn"]
-
                                 cursor = conn.cursor()
+
+                                cursor.execute("SET autocommit = 0")
+                                cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+                                cursor.execute("START TRANSACTION")
 
                                 if upd_title != "":
                                     sql = "UPDATE titles SET primaryTitle = %s WHERE tconst = %s"
@@ -256,10 +274,11 @@ with right_col:
                                     val = (upd_genre, upd_id)
                                     cursor.execute(sql, val)
 
-                                cursor.close()
+                                st.session_state["txn_conn"] = conn
+                                st.session_state["in_transaction"] = True
+                                st.session_state["id"] = upd_id
 
                                 st.success(f"'{upd_id}' updated successfully")
-                                st.session_state["id"] = upd_id
                         else:
                             st.error("At least one must be filled")
                 else:
@@ -270,7 +289,8 @@ with right_col:
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
-                if connections[curr_node]:
+                conn = new_conn(curr_node)
+                if conn:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
@@ -278,17 +298,20 @@ with right_col:
                         if not row:
                             st.error(f"No record found with ID {del_id.strip()}")
                         else:
-                            start_transaction()
-                            conn = st.session_state["txn_conn"]
-
                             cursor = conn.cursor()
+
+                            cursor.execute("SET autocommit = 0")
+                            cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+                            cursor.execute("START TRANSACTION")
+                            
                             sql = "DELETE FROM titles WHERE tconst = %s"
                             cursor.execute(sql, (del_id,))
 
-                            cursor.close()
+                            st.session_state["txn_conn"] = conn
+                            st.session_state["in_transaction"] = True
+                            st.session_state["id"] = del_id
 
                             st.success(f"Movie with ID {del_id} deleted")
-                            st.session_state["id"] = del_id
                 else:
                     st.error(f"No connection to {curr_node}")
             except Exception as e:
