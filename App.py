@@ -120,7 +120,7 @@ with right_col:
     
     def show_surrounding_rows(tconst):
         try:
-            conn = new_conn(curr_node)
+            conn = st.session_state["txn_conn"] if st.session_state["in_transaction"] else new_conn(curr_node)
             cursor = conn.cursor(dictionary=True)
 
             num = int(tconst[2:])
