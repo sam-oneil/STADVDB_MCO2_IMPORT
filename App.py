@@ -87,7 +87,7 @@ with right_col:
 
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
-            row = cursor.fetchone()
+            row = cursor.fetchall()
             cursor.close()
 
             return row
@@ -137,32 +137,16 @@ with right_col:
 
     search_term = st.text_input("Enter Title ID (tconst):", key="search_term")
 
-if st.button("Search", type="primary"):
-    if search_term.strip() != "":
-        try:
-            start_transaction()
-            conn = st.session_state["txn_conn"]
-            
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM titles WHERE tconst = %s", (search_term.strip(),))
-            row = cursor.fetchall()
-            cursor.close()
-            
-            conn.commit()
-            st.session_state["in_transaction"] = False
-            st.session_state["txn_conn"] = None
-            
-            if row:
-                st.table(row)
-            else:
-                st.warning(f"No record found with ID {search_term.strip()}")
-                
-        except Exception as e:
-            st.error(f"Search failed: {e}")
-            if st.session_state["in_transaction"]:
-                st.session_state["txn_conn"].rollback()
-                st.session_state["in_transaction"] = False
-                st.session_state["txn_conn"] = None
+    if st.button("Search", type = "primary"):
+        if search_term.strip() != "":
+            try:
+                row = get_row_by_tconst(search_term.strip())
+                if row:
+                    st.dataframe([row])
+                else:
+                    st.warning(f"No record found with ID {search_term.strip()}")
+            except Exception as e:
+                st.error(f"Search failed: {e}")
 
     col1, col2, col3 = st.columns(3, gap="large")
     
@@ -290,7 +274,7 @@ if st.button("Search", type="primary"):
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
-                        row = get_row_by_tconst(del_id.strip())
+                        row = get_row_by_tconst(conn, del_id.strip())
                         if not row:
                             st.error(f"No record found with ID {del_id.strip()}")
                         else:
