@@ -52,6 +52,16 @@ with left_col:
             else:
                 st.error("● Unreachable")
 
+    # --- Replication Log ---
+    st.header("REPLICATION LOG")
+    conn_debug = new_conn(curr_node)
+    cursor = conn_debug.cursor(dictionary=True)
+    cursor.execute("SELECT * FROM replication_log ORDER BY id DESC LIMIT 10")
+    rows = cursor.fetchall()
+    st.dataframe(rows)
+    cursor.close()
+    conn_debug.close()
+
     # --- Retry Pending Replications ---
     st.header("PENDING REPLICATIONS")
     if "pending_replications" not in st.session_state:
@@ -336,6 +346,8 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
                                         succ, fail, errs = replicate_update(curr_node, targets, update_sql)
+                                        if succ:
+                                            st.info(f"Replicated update to: {succ}")
                                         if fail:
                                             ok, ierr = insert_replication_log(nodes[curr_node], upd_id, update_sql, 'UPDATE', targets, str(errs))
                                             if not ok:
@@ -355,6 +367,8 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
                                         succ, fail, errs = replicate_update(curr_node, targets, update_sql)
+                                        if succ:
+                                            st.info(f"Replicated update to: {succ}")
                                         if fail:
                                             ok, ierr = insert_replication_log(nodes[curr_node], upd_id, update_sql, 'UPDATE', targets, str(errs))
                                             if not ok:
@@ -372,6 +386,8 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
                                         succ, fail, errs = replicate_update(curr_node, targets, update_sql)
+                                        if succ:
+                                            st.info(f"Replicated update to: {succ}")
                                         if fail:
                                             ok, ierr = insert_replication_log(nodes[curr_node], upd_id, update_sql, 'UPDATE', targets, str(errs))
                                             if not ok:
