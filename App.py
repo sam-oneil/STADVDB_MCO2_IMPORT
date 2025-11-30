@@ -105,12 +105,14 @@ with left_col:
         conn_debug = new_conn(curr_node)
         cursor = conn_debug.cursor(dictionary=True)
 
+        LIMIT_NUM = 5
+
         # Build query based on filter
         if log_stage == "BOTH":
-            cursor.execute("SELECT * FROM replication_log ORDER BY id DESC LIMIT 20")
+            cursor.execute(f"SELECT * FROM replication_log ORDER BY id DESC LIMIT {LIMIT_NUM}")
         else:
             cursor.execute(
-                "SELECT * FROM replication_log WHERE txn_stage = %s ORDER BY id DESC LIMIT 20",
+                f"SELECT * FROM replication_log WHERE txn_stage = %s ORDER BY id DESC LIMIT {LIMIT_NUM}",
                 (log_stage,)
             )
 
