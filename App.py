@@ -79,6 +79,18 @@ with left_col:
             else:
                 st.error("● Unreachable")
 
+    # --- Isolation Level ---
+    st.header("ISOLATION LEVEL")
+    isolation_levels = ["READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"]
+    selected_level = st.selectbox("Transaction Isolation Level", isolation_levels, index=isolation_levels.index(st.session_state["iso_level"]))
+
+    if st.button("Confirm", type = "primary", width = "stretch"):
+        if conn:
+            st.session_state["iso_level"] = selected_level
+            st.success(f"Isolation level confirmed: {st.session_state['iso_level']}")
+        else:
+            st.error("No connection to Node 1")
+
     # --- Replication Log ---
     st.header("REPLICATION LOG")
     conn_debug = new_conn(curr_node)
@@ -111,18 +123,6 @@ with left_col:
                 st.error(f"Still failed on: {[t['target_nodes'] for t in failures]}")
     else:
         st.info("No pending replications.")
-
-    # --- Isolation Level ---
-    st.header("ISOLATION LEVEL")
-    isolation_levels = ["READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"]
-    selected_level = st.selectbox("Transaction Isolation Level", isolation_levels, index=isolation_levels.index(st.session_state["iso_level"]))
-
-    if st.button("Confirm", type = "primary", width = "stretch"):
-        if conn:
-            st.session_state["iso_level"] = selected_level
-            st.success(f"Isolation level confirmed: {st.session_state['iso_level']}")
-        else:
-            st.error("No connection to Node 1")
 
 with right_col:
     # --- CRUD Operations ---
