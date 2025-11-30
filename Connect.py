@@ -66,30 +66,35 @@ def replicate_update(source_node, target_nodes, sql_text):
             conn_target.close()
             success.append(node)
         except Exception as e:
+            print(f"Replication to {node} failed: {e}")
             failed.append(node)
             errors[node] = str(e)
+
     return success, failed, errors
 
-def insert_replication_log(local_cfg, tconst, sql_text, op_type, target_nodes, last_error=None):
-    """
-    Insert a pending replication task into the local replication_log table.
-    local_cfg should be nodes[source_node].
-    target_nodes should be a list (will be stored as comma-separated).
-    """
+def insert_replication_log(node_cfg, tconst, sql_text, op_type, target_nodes, last_error=None, txn_stage="PRE_COMMIT"):
     try:
         conn = mysql.connector.connect(
-            host=local_cfg["host"],
-            port=local_cfg["port"],
-            user=local_cfg["user"],
-            password=local_cfg["password"],
-            database=local_cfg["database"]
+            host=node_cfg["host"],
+            port=node_cfg["port"],
+            user=node_cfg["user"],
+            password=node_cfg["password"],
+            database=node_cfg["database"]
         )
         cursor = conn.cursor()
-        sql = """
-        INSERT INTO replication_log (tconst, sql_text, op_type, target_nodes, last_error)
-        VALUES (%s, %s, %s, %s, %s)
-        """
-        cursor.execute(sql, (tconst, sql_text, op_type, ",".join(target_nodes), last_error))
+        cursor.execute("""
+            INSERT INTO replication_log
+            (tconst, sql_text, op_type, target_nodes, status, last_error, txn_stage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            tconst,
+            sql_text,
+            op_type,
+            ",".join(target_nodes),
+            "PENDING" if last_error else "REPLICATED",
+            last_error,
+            txn_stage
+        ))
         conn.commit()
         cursor.close()
         conn.close()
