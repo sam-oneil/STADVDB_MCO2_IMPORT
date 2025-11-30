@@ -76,13 +76,19 @@ with right_col:
 
             st.session_state["in_transaction"] = True
 
+    def get_conn():
+        return connections[curr_node]
+
     def get_row_by_tconst(conn, tconst):
         try:
+            conn = get_conn()
+
             cursor = conn.cursor(dictionary=True)
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
             row = cursor.fetchone()
             cursor.close()
+
             return row
         except Exception as e:
             st.error(f"Failed to fetch row: {e}")
@@ -101,8 +107,9 @@ with right_col:
     def is_title_in_node(title: str, curr_node: str) -> bool:
         return curr_node in get_nodes_from_title(title)
     
-    def show_surrounding_rows(conn, tconst):
+    def show_surrounding_rows(tconst):
         try:
+            conn = get_conn()
             cursor = conn.cursor(dictionary=True)
 
             num = int(tconst[2:])
@@ -130,6 +137,7 @@ with right_col:
     search_term = st.text_input("Enter Title ID (tconst):", key="search_term")
 
     if st.button("Search", type = "primary"):
+        conn = get_conn()
         if conn and search_term.strip() != "":
             try:
                 row = get_row_by_tconst(conn, search_term.strip())
@@ -167,6 +175,7 @@ with right_col:
     with col1:
         if st.button("Add", type = "primary", width = "stretch"):
             try:
+                conn = get_conn()
                 if conn:
                     if add_title != "" and is_title_in_node(add_title, curr_node):
                         start_transaction(conn)    
@@ -216,6 +225,7 @@ with right_col:
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
+                conn = get_conn()
                 if conn:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
@@ -263,6 +273,7 @@ with right_col:
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
+                conn = get_conn()
                 if conn:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
@@ -287,7 +298,7 @@ with right_col:
                 st.error(f"Delete failed: {e}")
 
 if st.session_state["id"]:
-    show_surrounding_rows(conn, st.session_state["id"])
+    show_surrounding_rows(st.session_state["id"])
 
 # --- Commit / Rollback ---
 if st.session_state["in_transaction"]:
@@ -305,12 +316,14 @@ if st.session_state["in_transaction"]:
             clicked_rollback = True
 
     if clicked_commit:
+        conn = get_conn()
         conn.commit()
         st.session_state["in_transaction"] = False
         st.success("Transaction committed!")
         st.rerun()  
 
     if clicked_rollback:
+        conn = get_conn()
         conn.rollback()
         st.session_state["in_transaction"] = False
         st.warning("Transaction rolled back!")
