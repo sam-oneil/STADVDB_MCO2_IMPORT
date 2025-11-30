@@ -1,6 +1,6 @@
 import streamlit as st
 import socket
-from Connect import nodes, connect_node, replicate_update, insert_replication_log
+from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs
 import mysql.connector
 
 # --- Node Definitions ---
@@ -105,12 +105,14 @@ with left_col:
         conn_debug = new_conn(curr_node)
         cursor = conn_debug.cursor(dictionary=True)
 
+        LIMIT_NUM = 5
+
         # Build query based on filter
         if log_stage == "BOTH":
-            cursor.execute("SELECT * FROM replication_log ORDER BY id DESC LIMIT 20")
+            cursor.execute(f"SELECT * FROM replication_log ORDER BY id DESC LIMIT {LIMIT_NUM}")
         else:
             cursor.execute(
-                "SELECT * FROM replication_log WHERE txn_stage = %s ORDER BY id DESC LIMIT 20",
+                f"SELECT * FROM replication_log WHERE txn_stage = %s ORDER BY id DESC LIMIT {LIMIT_NUM}",
                 (log_stage,)
             )
 
@@ -124,24 +126,63 @@ with left_col:
 
     # --- Retry Pending Replications ---
     st.header("PENDING REPLICATIONS")
-    if "pending_replications" not in st.session_state:
-        st.session_state["pending_replications"] = []  # store failed replication tasks
 
-    if st.session_state["pending_replications"]:
-        st.warning(f"{len(st.session_state['pending_replications'])} pending replication(s).")
+    # Fetch pending logs from local node
+    pending_logs = fetch_pending_logs(nodes[curr_node], limit=50)
+
+    if pending_logs:
+        st.warning(f"{len(pending_logs)} pending replication(s).")
+        
+        # Show pending logs in table
+        display_logs = [
+            {
+                "ID": log["id"],
+                "tconst": log["tconst"],
+                "Operation": log["op_type"],
+                "Targets": log["target_nodes"],
+                "Status": log["status"],
+                "Last Error": log["last_error"],
+                "Txn Stage": log["txn_stage"],
+                "Created At": log["created_at"],
+                "Last Attempt": log["last_attempt"]
+            }
+            for log in pending_logs
+        ]
+        st.dataframe(display_logs)
+
         if st.button("Retry Pending Replications"):
-            successes = []
-            failures = []
-            for task in st.session_state["pending_replications"]:
-                sql = task["sql"]
-                targets = task["target_nodes"]
-                s, f = replicate_update(curr_node, targets, sql)
-                successes.extend(s)
-                failures.extend(f)
-            st.session_state["pending_replications"] = [{"sql": t["sql"], "target_nodes": t["target_nodes"]} for t in failures]
-            st.success(f"Replicated successfully to: {successes}")
-            if failures:
-                st.error(f"Still failed on: {[t['target_nodes'] for t in failures]}")
+            still_pending = []
+            for log in pending_logs:
+                tconst = log["tconst"]
+                sql_text = log["sql_text"]
+                target_nodes = log["target_nodes"].split(",")
+                
+                succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
+                
+                # Update replication log for each node
+                for node in target_nodes:
+                    last_error = errs.get(node) if node in errs else None
+                    status = "REPLICATED" if node in succ else "PENDING"
+                    
+                    # Update log in DB
+                    insert_replication_log(
+                        nodes[curr_node],
+                        tconst,
+                        sql_text,
+                        log["op_type"],
+                        [node],
+                        last_error=last_error,
+                        txn_stage=log["txn_stage"]
+                    )
+                
+                if fail:
+                    still_pending.append(log)
+            
+            st.success(f"Replication retried. Successful nodes: {succ}")
+            if still_pending:
+                st.warning(f"Still pending: {[l['tconst'] for l in still_pending]}")
+            st.experimental_rerun()  # Refresh page to show updated pending logs
+
     else:
         st.info("No pending replications.")
 
