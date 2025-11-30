@@ -87,7 +87,7 @@ with right_col:
 
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
-            row = cursor.fetchall()
+            row = cursor.fetchone()
             cursor.close()
 
             return row
@@ -142,7 +142,7 @@ with right_col:
             try:
                 row = get_row_by_tconst(search_term.strip())
                 if row:
-                    st.table(row)
+                    st.dataframe([row])
                 else:
                     st.warning(f"No record found with ID {search_term.strip()}")
             except Exception as e:
