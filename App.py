@@ -293,7 +293,7 @@ with right_col:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
-                        row = get_row_by_tconst(conn, del_id.strip())
+                        row = get_row_by_tconst(del_id.strip())
                         if not row:
                             st.error(f"No record found with ID {del_id.strip()}")
                         else:
