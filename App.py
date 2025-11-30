@@ -96,7 +96,7 @@ with right_col:
 
     def get_row_by_tconst(tconst):
         try:
-            conn = new_conn(curr_node)
+            conn = get_conn(curr_node)
             cursor = conn.cursor(dictionary=True)
 
             query = "SELECT * FROM titles WHERE tconst = %s"
