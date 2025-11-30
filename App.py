@@ -31,6 +31,9 @@ if "id" not in st.session_state:
 if "iso_level" not in st.session_state:
     st.session_state["iso_level"] = "READ UNCOMMITTED"
 
+if "txn_conn" not in st.session_state:
+    st.session_state["txn_conn"] = None
+
 left_col, right_col = st.columns([1, 2], gap="large")
 
 with left_col:
@@ -65,9 +68,9 @@ with right_col:
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
 
     # --- Helper Functions ---
-    def start_transaction(conn):
-        """Start a new transaction if none is active."""
+    def start_transaction():
         if not st.session_state["in_transaction"]:
+            conn = connections[curr_node]
             cursor = conn.cursor()
             cursor.execute("SET AUTOCOMMIT = 0")
             cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
@@ -75,15 +78,13 @@ with right_col:
             cursor.close()
 
             st.session_state["in_transaction"] = True
+            st.session_state["txn_conn"] = conn
 
-    def get_conn():
-        return connections[curr_node]
-
-    def get_row_by_tconst(conn, tconst):
+    def get_row_by_tconst(tconst):
         try:
-            conn = get_conn()
-
+            conn = connections[curr_node]
             cursor = conn.cursor(dictionary=True)
+
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
             row = cursor.fetchone()
@@ -109,7 +110,7 @@ with right_col:
     
     def show_surrounding_rows(tconst):
         try:
-            conn = get_conn()
+            conn = connections[curr_node]
             cursor = conn.cursor(dictionary=True)
 
             num = int(tconst[2:])
@@ -136,20 +137,32 @@ with right_col:
 
     search_term = st.text_input("Enter Title ID (tconst):", key="search_term")
 
-    if st.button("Search", type = "primary"):
-        conn = get_conn()
-        if conn and search_term.strip() != "":
-            try:
-                row = get_row_by_tconst(conn, search_term.strip())
-                if row:
-                    start_transaction(conn)
-                    st.dataframe([row])
-                else:
-                    st.warning(f"No record found with ID {search_term.strip()}")
-                    
+if st.button("Search", type="primary"):
+    if search_term.strip() != "":
+        try:
+            start_transaction()
+            conn = st.session_state["txn_conn"]
+            
+            cursor = conn.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM titles WHERE tconst = %s", (search_term.strip(),))
+            row = cursor.fetchone()
+            cursor.close()
+            
+            conn.commit()
+            st.session_state["in_transaction"] = False
+            st.session_state["txn_conn"] = None
+            
+            if row:
+                st.dataframe([row])
+            else:
+                st.warning(f"No record found with ID {search_term.strip()}")
+                
+        except Exception as e:
+            st.error(f"Search failed: {e}")
+            if st.session_state["in_transaction"]:
+                st.session_state["txn_conn"].rollback()
                 st.session_state["in_transaction"] = False
-            except Exception as e:
-                st.error(f"Search failed: {e}")
+                st.session_state["txn_conn"] = None
 
     col1, col2, col3 = st.columns(3, gap="large")
     
@@ -175,11 +188,11 @@ with right_col:
     with col1:
         if st.button("Add", type = "primary", width = "stretch"):
             try:
-                conn = get_conn()
-                if conn:
+                if connections[curr_node]:
                     if add_title != "" and is_title_in_node(add_title, curr_node):
-                        start_transaction(conn)    
-                    
+                        start_transaction()    
+                        conn = st.session_state["txn_conn"]
+
                         RANGES = {
                             "Node 1": (1, 999_999),
                             "Node 2": (1_000_000, 1_999_999),
@@ -211,7 +224,7 @@ with right_col:
 
                         cursor.close()
 
-                        st.success(f"'{add_title}' added successfully")
+                        st.success(f"'{add_title}' added successfully with ID {new_tconst}")
                         st.session_state["id"] = new_tconst
                     elif add_title != "":
                         st.error(f"Title '{add_title}' does not belong to {curr_node}.")
@@ -225,12 +238,11 @@ with right_col:
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
-                conn = get_conn()
-                if conn:
+                if connections[curr_node]:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else: 
-                        row = get_row_by_tconst(conn, upd_id.strip()) # Check if record exists in the node
+                        row = get_row_by_tconst(upd_id.strip()) # Check if record exists in the node
                         if not row:
                             st.error(f"No record found with ID {upd_id.strip()}")
                         
@@ -240,7 +252,8 @@ with right_col:
                             if not is_title_in_node(effective_title, curr_node):
                                 st.error(f"Title '{effective_title}' does not belong to {curr_node}.")
                             else:
-                                start_transaction(conn)
+                                start_transaction()
+                                conn = st.session_state["txn_conn"]
 
                                 cursor = conn.cursor()
 
@@ -273,16 +286,16 @@ with right_col:
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
-                conn = get_conn()
-                if conn:
+                if connections[curr_node]:
                     if del_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else:
-                        row = get_row_by_tconst(conn, del_id.strip())
+                        row = get_row_by_tconst(del_id.strip())
                         if not row:
                             st.error(f"No record found with ID {del_id.strip()}")
                         else:
-                            start_transaction(conn)
+                            start_transaction()
+                            conn = st.session_state["txn_conn"]
 
                             cursor = conn.cursor()
                             sql = "DELETE FROM titles WHERE tconst = %s"
@@ -316,16 +329,18 @@ if st.session_state["in_transaction"]:
             clicked_rollback = True
 
     if clicked_commit:
-        conn = get_conn()
+        conn = st.session_state["txn_conn"]
         conn.commit()
         st.session_state["in_transaction"] = False
+        st.session_state["txn_conn"] = None
         st.success("Transaction committed!")
         st.rerun()  
 
     if clicked_rollback:
-        conn = get_conn()
+        conn = st.session_state["txn_conn"]
         conn.rollback()
         st.session_state["in_transaction"] = False
+        st.session_state["txn_conn"] = None
         st.warning("Transaction rolled back!")
         st.rerun()
 
