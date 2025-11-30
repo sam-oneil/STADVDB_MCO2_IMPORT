@@ -1,6 +1,7 @@
 import streamlit as st
 import socket
-from Connect import *
+from Connect import nodes, connect_node, replicate_update, insert_replication_log
+import mysql.connector
 
 # --- Node Definitions ---
 curr_host = socket.gethostname()
@@ -50,6 +51,29 @@ with left_col:
                 st.success("● Reachable")
             else:
                 st.error("● Unreachable")
+
+    # --- Retry Pending Replications ---
+    st.header("PENDING REPLICATIONS")
+    if "pending_replications" not in st.session_state:
+        st.session_state["pending_replications"] = []  # store failed replication tasks
+
+    if st.session_state["pending_replications"]:
+        st.warning(f"{len(st.session_state['pending_replications'])} pending replication(s).")
+        if st.button("Retry Pending Replications"):
+            successes = []
+            failures = []
+            for task in st.session_state["pending_replications"]:
+                sql = task["sql"]
+                targets = task["target_nodes"]
+                s, f = replicate_update(curr_node, targets, sql)
+                successes.extend(s)
+                failures.extend(f)
+            st.session_state["pending_replications"] = [{"sql": t["sql"], "target_nodes": t["target_nodes"]} for t in failures]
+            st.success(f"Replicated successfully to: {successes}")
+            if failures:
+                st.error(f"Still failed on: {[t['target_nodes'] for t in failures]}")
+    else:
+        st.info("No pending replications.")
 
     # --- Isolation Level ---
     st.header("ISOLATION LEVEL")
@@ -122,6 +146,33 @@ with right_col:
     def is_title_in_node(title: str, curr_node: str) -> bool:
         return curr_node in get_nodes_from_title(title)
     
+    def build_insert_sql(tconst, title, year, genre):
+        escaped_title = title.replace('"', '\"')
+        escaped_genre = genre.replace('"', '\"')
+        return (
+            "INSERT INTO titles (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres) "
+            f"VALUES ('{tconst}','movie',\"{escaped_title}\",\"{escaped_title}\",0,{int(year)},'\\\\N',\"{escaped_genre}\") "
+            "ON DUPLICATE KEY UPDATE primaryTitle=VALUES(primaryTitle), originalTitle=VALUES(originalTitle), startYear=VALUES(startYear), genres=VALUES(genres)"
+        )
+
+    def build_update_sql(tconst, updates: dict):
+        parts = []
+        for k,v in updates.items():
+            if v is None:
+                continue
+            if isinstance(v, int):
+                parts.append(f"{k} = {v}")
+            else:
+                s = str(v).replace('"', '\"')
+                parts.append(f'{k} = "{s}"')
+        if not parts:
+            return None
+        set_clause = ", ".join(parts)
+        return f'UPDATE titles SET {set_clause} WHERE tconst = \'{tconst}\''
+
+    def build_delete_sql(tconst):
+        return f"DELETE FROM titles WHERE tconst = '{tconst}'"
+
     def show_surrounding_rows(conn, tconst):
         try:
             cursor = conn.cursor(dictionary=True)
@@ -182,6 +233,7 @@ with right_col:
         
     col1, col2, col3 = st.columns(3, gap="large")
 
+    # Add
     with col1:
         if st.button("Add", type="primary", use_container_width=True):
             if add_title == "":
@@ -225,6 +277,23 @@ with right_col:
 
                         cursor.execute(sql, val)
 
+                        # replicate this INSERT to other nodes (idempotent SQL)
+                        sql_text = build_insert_sql(new_tconst, add_title, add_year, add_genre)
+                        targets = get_nodes_from_title(add_title)  # returns ['Node 1', 'Node 2'] or ['Node 1','Node 3']
+                        # Always ensure central Node 1 is included
+                        if 'Node 1' not in targets:
+                            targets.insert(0, 'Node 1')
+
+                        succ, fail, errs = replicate_update(curr_node, targets, sql_text)
+                        if fail:
+                            # persist pending replication for recovery
+                            ok, ierr = insert_replication_log(nodes[curr_node], new_tconst, sql_text, 'INSERT', targets, str(errs))
+                            if not ok:
+                                st.error(f"Failed to write replication log locally: {ierr}")
+                            st.warning(f"Replication to {fail} failed; task saved for retry.")
+                        else:
+                            st.success(f"Replicated to: {succ}")
+
                         st.session_state["txn_conn"] = conn
                         st.session_state["in_transaction"] = True
                         st.session_state["id"] = new_tconst
@@ -234,6 +303,7 @@ with right_col:
                 except Exception as e:
                     st.error(f"Add failed: {e}")
     
+    # Update
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
@@ -258,16 +328,55 @@ with right_col:
                                     sql = "UPDATE titles SET primaryTitle = %s WHERE tconst = %s"
                                     val = (upd_title, upd_id)
                                     cursor.execute(sql, val)
+                                    
+                                    # replicate update
+                                    update_sql = build_update_sql(upd_id, {"primaryTitle": upd_title})
+                                    if update_sql:
+                                        targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
+                                        if 'Node 1' not in targets:
+                                            targets.insert(0, 'Node 1')
+                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
+                                        if fail:
+                                            ok, ierr = insert_replication_log(nodes[curr_node], upd_id, update_sql, 'UPDATE', targets, str(errs))
+                                            if not ok:
+                                                st.error(f"Failed to write replication log locally: {ierr}")
+                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
+
 
                                 if upd_year != 0:
                                     sql = "UPDATE titles SET startYear = %s WHERE tconst = %s"
                                     val = (upd_year, upd_id)
                                     cursor.execute(sql, val)
 
+                                    # replicate update
+                                    update_sql = build_update_sql(upd_id, {"startYear": upd_year})
+                                    if update_sql:
+                                        targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
+                                        if 'Node 1' not in targets:
+                                            targets.insert(0, 'Node 1')
+                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
+                                        if fail:
+                                            ok, ierr = insert_replication_log(nodes[curr_node], upd_id, update_sql, 'UPDATE', targets, str(errs))
+                                            if not ok:
+                                                st.error(f"Failed to write replication log locally: {ierr}")
+                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
+
                                 if upd_genre != "":
                                     sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
                                     val = (upd_genre, upd_id)
                                     cursor.execute(sql, val)
+                                    # replicate update
+                                    update_sql = build_update_sql(upd_id, {"genres": upd_genre})
+                                    if update_sql:
+                                        targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
+                                        if 'Node 1' not in targets:
+                                            targets.insert(0, 'Node 1')
+                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
+                                        if fail:
+                                            ok, ierr = insert_replication_log(nodes[curr_node], upd_id, update_sql, 'UPDATE', targets, str(errs))
+                                            if not ok:
+                                                st.error(f"Failed to write replication log locally: {ierr}")
+                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
 
                                 st.session_state["txn_conn"] = conn
                                 st.session_state["in_transaction"] = True
@@ -281,6 +390,7 @@ with right_col:
             except Exception as e:
                 st.error(f"Update failed: {e}")
 
+    # Delete
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
@@ -297,6 +407,19 @@ with right_col:
                             
                             sql = "DELETE FROM titles WHERE tconst = %s"
                             cursor.execute(sql, (del_id,))
+
+                            del_sql = build_delete_sql(del_id)
+                            targets = get_nodes_from_title(row["primaryTitle"])
+                            if 'Node 1' not in targets:
+                                targets.insert(0, 'Node 1')
+                            succ, fail, errs = replicate_update(curr_node, targets, del_sql)
+                            if fail:
+                                ok, ierr = insert_replication_log(nodes[curr_node], del_id, del_sql, 'DELETE', targets, str(errs))
+                                if not ok:
+                                    st.error(f"Failed to write replication log locally: {ierr}")
+                                st.warning(f"Replication to {fail} failed; task saved for retry.")
+                            else:
+                                st.success(f"Replicated delete to: {succ}")
 
                             st.session_state["txn_conn"] = conn
                             st.session_state["in_transaction"] = True
@@ -341,4 +464,3 @@ if st.session_state["in_transaction"]:
         st.session_state["txn_conn"] = None
         st.warning("Transaction rolled back!")
         st.rerun()
-

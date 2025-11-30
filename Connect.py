@@ -1,4 +1,5 @@
 import mysql.connector
+import time
 
 # --- DB Credentials ---
 USER = "dbuser"
@@ -34,10 +35,19 @@ def connect_node(nodes):
 
     return connections, ping_results
 
-# --- Replication Function ---
-def replicate_update(source_node, target_nodes, sql):
-    success, failure = [], []
+# --- Replication Helpers ---
+
+def replicate_update(source_node, target_nodes, sql_text):
+    """
+    Execute a raw SQL string on each target node (skips source_node).
+    Returns (success_nodes, failed_nodes, errors_dict)
+    """
+    success = []
+    failed = []
+    errors = {}
     for node in target_nodes:
+        if node == source_node:
+            continue
         try:
             cfg = nodes[node]
             conn_target = mysql.connector.connect(
@@ -45,14 +55,62 @@ def replicate_update(source_node, target_nodes, sql):
                 port=cfg["port"],
                 user=cfg["user"],
                 password=cfg["password"],
-                database=cfg["database"]
+                database=cfg["database"],
+                connection_timeout=5
             )
             cursor_target = conn_target.cursor()
-            cursor_target.execute(sql)
+            cursor_target.execute("SET AUTOCOMMIT = 1")
+            cursor_target.execute(sql_text)
             conn_target.commit()
             cursor_target.close()
             conn_target.close()
             success.append(node)
         except Exception as e:
-            failure.append(node)
-    return success, failure
+            failed.append(node)
+            errors[node] = str(e)
+    return success, failed, errors
+
+def insert_replication_log(local_cfg, tconst, sql_text, op_type, target_nodes, last_error=None):
+    """
+    Insert a pending replication task into the local replication_log table.
+    local_cfg should be nodes[source_node].
+    target_nodes should be a list (will be stored as comma-separated).
+    """
+    try:
+        conn = mysql.connector.connect(
+            host=local_cfg["host"],
+            port=local_cfg["port"],
+            user=local_cfg["user"],
+            password=local_cfg["password"],
+            database=local_cfg["database"]
+        )
+        cursor = conn.cursor()
+        sql = """
+        INSERT INTO replication_log (tconst, sql_text, op_type, target_nodes, last_error)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        cursor.execute(sql, (tconst, sql_text, op_type, ",".join(target_nodes), last_error))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def fetch_pending_logs(local_cfg, limit=100):
+    try:
+        conn = mysql.connector.connect(
+            host=local_cfg["host"],
+            port=local_cfg["port"],
+            user=local_cfg["user"],
+            password=local_cfg["password"],
+            database=local_cfg["database"]
+        )
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM replication_log WHERE status = 'PENDING' LIMIT %s", (limit,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception as e:
+        return []
