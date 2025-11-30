@@ -80,7 +80,7 @@ with left_col:
                 st.error("● Unreachable")
 
     # --- Replication Log ---
-    st.header("Replication Log")
+    st.header("REPLICATION LOG")
     conn_debug = new_conn(curr_node)
     cursor = conn_debug.cursor(dictionary=True)
     cursor.execute("SELECT * FROM replication_log ORDER BY id DESC LIMIT 10")
