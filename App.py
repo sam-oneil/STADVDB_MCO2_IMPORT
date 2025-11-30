@@ -145,7 +145,7 @@ if st.button("Search", type="primary"):
             
             cursor = conn.cursor(dictionary=True)
             cursor.execute("SELECT * FROM titles WHERE tconst = %s", (search_term.strip(),))
-            row = cursor.fetchone()
+            row = cursor.fetchall()
             cursor.close()
             
             conn.commit()
@@ -153,7 +153,7 @@ if st.button("Search", type="primary"):
             st.session_state["txn_conn"] = None
             
             if row:
-                st.dataframe([row])
+                st.table(row)
             else:
                 st.warning(f"No record found with ID {search_term.strip()}")
                 
