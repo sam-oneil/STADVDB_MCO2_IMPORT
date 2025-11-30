@@ -118,7 +118,7 @@ with right_col:
     def is_title_in_node(title: str, curr_node: str) -> bool:
         return curr_node in get_nodes_from_title(title)
     
-    def show_surrounding_rows(tconst):
+    def show_surrounding_rows(conn, tconst):
         try:
             cursor = conn.cursor(dictionary=True)
 
