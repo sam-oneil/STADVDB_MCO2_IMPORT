@@ -1,6 +1,6 @@
 import streamlit as st
 import socket
-from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs, update_replication_log
+from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs, update_replication_log, recover_pending_transactions, auto_recovery_on_startup
 import mysql.connector
 
 # --- Node Definitions ---
@@ -19,11 +19,25 @@ st.markdown("<h1 style='text-align: center;'>Distributed Database Management Sys
 if "refresh" not in st.session_state:
     st.session_state["refresh"] = False
 
+if "auto_recovery_done" not in st.session_state:
+    st.session_state["auto_recovery_done"] = False
+
 if curr_node == "Unknown Node":
     st.error("This application must be run on one of the designated nodes.")
     st.stop()
 else:
     st.success(f"Running on {curr_node}")
+
+# --- Auto Recovery on Startup ---
+if not st.session_state["auto_recovery_done"]:
+    try:
+        recovery_result = auto_recovery_on_startup(curr_node)
+        if recovery_result["processed"] > 0:
+            st.info(f"Auto-recovery completed: {recovery_result['processed']} logs processed, {recovery_result['recovered']} recovered")
+        st.session_state["auto_recovery_done"] = True
+    except Exception as e:
+        st.warning(f"Auto-recovery failed: {e}")
+        st.session_state["auto_recovery_done"] = True
 
 # --- Session State Initialization ---
 if "in_transaction" not in st.session_state:
@@ -155,40 +169,6 @@ with left_col:
             for log in pending_logs
         ]
         st.dataframe(display_logs)
-
-        if st.button("Retry Pending Replications"):
-            still_pending = []
-            for log in pending_logs:
-                tconst = log["tconst"]
-                sql_text = log["sql_text"]
-                target_nodes = log["target_nodes"].split(",")
-                
-                succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
-                
-                # Update the existing log entry based on overall result
-                if fail:
-                    # Still has failures, keep as PENDING with error details
-                    error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
-                    ok, ierr = update_replication_log(
-                        nodes[curr_node],
-                        log["id"],
-                        "PENDING",
-                        error_msg
-                    )
-                else:
-                    # All replications succeeded
-                    ok, ierr = update_replication_log(
-                        nodes[curr_node],
-                        log["id"],
-                        "REPLICATED",
-                        None
-                    )
-                
-                if not ok:
-                    st.error(f"Failed to update replication log: {ierr}")
-            
-            st.success("Pending replications retried!")
-            st.session_state["refresh"] = not st.session_state.get("refresh", False)
 
     else:
         st.info("No pending replications.")
