@@ -27,7 +27,6 @@ if curr_node == "Unknown Node":
     st.stop()
 else:
     st.success(f"Running on {curr_node}")
-    st.info(f"Session ID: {st.session_state['session_id'][:8]}...")  # Show first 8 chars for debugging
 
 # --- Auto Recovery on Startup ---
 if not st.session_state["auto_recovery_done"]:
@@ -66,6 +65,9 @@ if "txn_conn" not in st.session_state:
 
 if "pending_replications" not in st.session_state:
     st.session_state["pending_replications"] = []
+
+# Display session info for debugging after all session state is initialized
+st.info(f"Session ID: {st.session_state['session_id'][:8]}...")  # Show first 8 chars for debugging
 
 # --- Helper Functions ---
 def new_conn(curr_node):
