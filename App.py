@@ -16,6 +16,9 @@ curr_node = host_node.get(curr_host, "Unknown Node")
 st.set_page_config(layout="wide")
 st.markdown("<h1 style='text-align: center;'>Distributed Database Management System</h1>", unsafe_allow_html=True)
 
+if "refresh" not in st.session_state:
+    st.session_state["refresh"] = False
+
 if curr_node == "Unknown Node":
     st.error("This application must be run on one of the designated nodes.")
     st.stop()
@@ -175,7 +178,7 @@ with left_col:
             st.success(f"Replication retried. Successful nodes: {succ}")
             if still_pending:
                 st.warning(f"Still pending: {[l['tconst'] for l in still_pending]}")
-            st.experimental_rerun()  # Refresh page to show updated pending logs
+            st.session_state["refresh"] = not st.session_state.get("refresh", False)
 
     else:
         st.info("No pending replications.")
