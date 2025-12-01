@@ -27,6 +27,7 @@ if curr_node == "Unknown Node":
     st.stop()
 else:
     st.success(f"Running on {curr_node}")
+    st.info(f"Session ID: {st.session_state['session_id'][:8]}...")  # Show first 8 chars for debugging
 
 # --- Auto Recovery on Startup ---
 if not st.session_state["auto_recovery_done"]:
@@ -42,7 +43,14 @@ if not st.session_state["auto_recovery_done"]:
 # --- Session State Initialization ---
 if "session_id" not in st.session_state:
     import uuid
+    # Generate a truly unique session ID for each browser tab
     st.session_state["session_id"] = str(uuid.uuid4())
+    # Force session isolation by clearing any cached connections
+    if "txn_conn" in st.session_state:
+        if st.session_state["txn_conn"]:
+            st.session_state["txn_conn"].close()
+        st.session_state["txn_conn"] = None
+    st.session_state["in_transaction"] = False
 
 if "in_transaction" not in st.session_state:
     st.session_state["in_transaction"] = False
@@ -94,9 +102,9 @@ def get_read_conn(curr_node):
     conn = new_conn(curr_node)
     cursor = conn.cursor()
     
-    # Set the same isolation level for read operations
+    # Set the same isolation level for read operations but don't start a transaction
     cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-    cursor.execute("START TRANSACTION")
+    cursor.execute("SET AUTOCOMMIT = 1")  # Enable autocommit for reads
     cursor.close()
     
     return conn
@@ -539,7 +547,7 @@ with right_col:
                 st.error(f"Delete failed: {e}")
 
 if st.session_state["id"]:
-    show_surrounding_rows(conn, st.session_state["id"])
+    show_surrounding_rows(None, st.session_state["id"])  # Pass None since function uses its own read connection
 
 # --- Commit / Rollback ---
 if st.session_state["in_transaction"]:
