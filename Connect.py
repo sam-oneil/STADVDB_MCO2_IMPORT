@@ -205,7 +205,6 @@ def recover_pending_transactions(curr_node):
             # Still has failures, keep as PENDING with error details
             error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
             ok, ierr = update_replication_log(
-                nodes[curr_node],
                 log["id"],
                 "PENDING",
                 error_msg
@@ -217,7 +216,6 @@ def recover_pending_transactions(curr_node):
         else:
             # All replications succeeded
             ok, ierr = update_replication_log(
-                nodes[curr_node],
                 log["id"],
                 "REPLICATED",
                 None
@@ -248,9 +246,9 @@ def auto_recovery_on_startup(curr_node):
         # Update log status
         if fail:
             error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
-            update_replication_log(nodes[curr_node], log["id"], "PENDING", error_msg)
+            update_replication_log(log["id"], "PENDING", error_msg)
         else:
-            update_replication_log(nodes[curr_node], log["id"], "REPLICATED", None)
+            update_replication_log(log["id"], "REPLICATED", None)
             recovered += 1
         
         processed += 1
