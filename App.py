@@ -44,12 +44,12 @@ if "session_id" not in st.session_state:
     import uuid
     # Generate a truly unique session ID for each browser tab
     st.session_state["session_id"] = str(uuid.uuid4())
-    # Force session isolation by clearing any cached connections
-    if "txn_conn" in st.session_state:
-        if st.session_state["txn_conn"]:
-            st.session_state["txn_conn"].close()
-        st.session_state["txn_conn"] = None
+    # Force complete session isolation by clearing everything
     st.session_state["in_transaction"] = False
+    st.session_state["txn_conn"] = None
+    st.session_state["pending_replications"] = []
+    st.session_state["id"] = None
+    st.session_state["read_conn_cache"] = {}  # Cache read connections per session
 
 if "in_transaction" not in st.session_state:
     st.session_state["in_transaction"] = False
@@ -62,6 +62,9 @@ if "iso_level" not in st.session_state:
 
 if "txn_conn" not in st.session_state:
     st.session_state["txn_conn"] = None
+
+if "read_conn_cache" not in st.session_state:
+    st.session_state["read_conn_cache"] = {}
 
 if "pending_replications" not in st.session_state:
     st.session_state["pending_replications"] = []
@@ -104,12 +107,47 @@ def get_read_conn(curr_node):
     conn = new_conn(curr_node)
     cursor = conn.cursor()
     
-    # Set the same isolation level for read operations but don't start a transaction
-    cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-    cursor.execute("SET AUTOCOMMIT = 1")  # Enable autocommit for reads
-    cursor.close()
+    # Set session-specific connection identifier
+    cursor.execute(f"SET @session_id = '{st.session_state['session_id']}'")
     
+    # For different isolation levels, we need different connection behaviors
+    if st.session_state['iso_level'] == "READ UNCOMMITTED":
+        # Can see uncommitted changes from other sessions
+        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+        cursor.execute("SET AUTOCOMMIT = 1")
+    elif st.session_state['iso_level'] == "READ COMMITTED":
+        # Can only see committed changes
+        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        cursor.execute("SET AUTOCOMMIT = 1")
+    elif st.session_state['iso_level'] in ["REPEATABLE READ", "SERIALIZABLE"]:
+        # Start a read transaction to maintain consistency within the session
+        cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+        cursor.execute("SET AUTOCOMMIT = 0")
+        cursor.execute("START TRANSACTION")
+    
+    cursor.close()
     return conn
+
+def get_session_read_conn(curr_node):
+    """Get a session-specific read connection that persists for the session"""
+    session_key = f"{curr_node}_{st.session_state['iso_level']}"
+    
+    # Check if we already have a connection for this session and isolation level
+    if session_key not in st.session_state["read_conn_cache"]:
+        conn = get_read_conn(curr_node)
+        st.session_state["read_conn_cache"][session_key] = conn
+    
+    return st.session_state["read_conn_cache"][session_key]
+
+def cleanup_session_connections():
+    """Clean up session connections when isolation level changes or session ends"""
+    for conn in st.session_state["read_conn_cache"].values():
+        try:
+            if conn.is_connected():
+                conn.close()
+        except:
+            pass
+    st.session_state["read_conn_cache"] = {}
     
 left_col, right_col = st.columns([1, 2], gap="large")
 
@@ -135,6 +173,8 @@ with left_col:
 
     if st.button("Confirm", type = "primary", width = "stretch"):
         if conn:
+            # Clean up existing read connections when isolation level changes
+            cleanup_session_connections()
             st.session_state["iso_level"] = selected_level
             st.success(f"Isolation level confirmed: {st.session_state['iso_level']}")
         else:
@@ -151,7 +191,7 @@ with left_col:
     )
 
     try:
-        conn_debug = get_read_conn(curr_node)  # Use read connection for isolation
+        conn_debug = get_session_read_conn(curr_node)  # Use session-specific read connection
         cursor = conn_debug.cursor(dictionary=True)
 
         LIMIT_NUM = 5
@@ -169,7 +209,7 @@ with left_col:
         st.dataframe(rows)
 
         cursor.close()
-        conn_debug.close()
+        # Don't close the connection - it's cached for the session
     except Exception as e:
         st.error(f"Failed to load replication log: {e}")
 
@@ -233,14 +273,14 @@ with right_col:
 
     def get_row_by_tconst(tconst):
         try:
-            conn = get_read_conn(curr_node)  # Use read connection for proper isolation
+            conn = get_session_read_conn(curr_node)  # Use session-specific read connection
             cursor = conn.cursor(dictionary=True)
 
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
             row = cursor.fetchone()
             cursor.close()
-            conn.close()  # Close read connection
+            # Don't close the connection - it's cached for the session
 
             return row
         except Exception as e:
@@ -289,8 +329,8 @@ with right_col:
 
     def show_surrounding_rows(conn, tconst):
         try:
-            # Use read connection for proper isolation instead of passed connection
-            read_conn = get_read_conn(curr_node)
+            # Use session-specific read connection for proper isolation
+            read_conn = get_session_read_conn(curr_node)
             cursor = read_conn.cursor(dictionary=True)
 
             num = int(tconst[2:])
@@ -306,7 +346,7 @@ with right_col:
             cursor.execute(query, (lower, upper))
             rows = cursor.fetchall()
             cursor.close()
-            read_conn.close()
+            # Don't close the connection - it's cached for the session
 
             st.subheader("UPDATED DATABASE")
             st.dataframe(rows)
@@ -610,6 +650,10 @@ if st.session_state["in_transaction"]:
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
         conn.close()  # Close the connection to ensure proper isolation cleanup
+        
+        # Clean up read connections to ensure fresh reads after commit
+        cleanup_session_connections()
+        
         st.success("Transaction committed!")
         st.rerun()
 
@@ -623,5 +667,9 @@ if st.session_state["in_transaction"]:
         
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
+        
+        # Clean up read connections to ensure fresh reads after rollback
+        cleanup_session_connections()
+        
         st.warning("Transaction rolled back!")
         st.rerun()
