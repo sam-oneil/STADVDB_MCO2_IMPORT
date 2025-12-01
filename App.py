@@ -1,6 +1,6 @@
 import streamlit as st
 import socket
-from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs, update_replication_log, recover_pending_transactions
+from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs
 import mysql.connector
 import threading
 import time
@@ -14,6 +14,68 @@ host_node = {
 }
 
 curr_node = host_node.get(curr_host, "Unknown Node")
+
+def update_replication_log(log_id, status, last_error=None):
+    """
+    Update an existing replication log row with new status, error, last_attempt, and increment retry_count.
+    """
+    try:
+        # Connect to local node DB 
+        local_cfg = nodes[curr_node]
+        conn = mysql.connector.connect(
+            host=local_cfg["host"],
+            port=local_cfg["port"],
+            user=local_cfg["user"],
+            password=local_cfg["password"],
+            database=local_cfg["database"]
+        )
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE replication_log
+            SET status=%s,
+                last_error=%s,
+                last_attempt=NOW(),
+                retry_count=IFNULL(retry_count,0)+1
+            WHERE id=%s
+        """, (status, last_error, log_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+    
+def recover_pending_transactions(curr_node):
+    """
+    Automatically retry all PENDING replication logs for this node.
+    Returns a summary dict.
+    """
+    pending_logs = fetch_pending_logs(nodes[curr_node], limit=1000)  # fetch all
+    recovery_summary = {"recovered": [], "still_pending": [], "failed": []}
+
+    for log in pending_logs:
+        tconst = log["tconst"]
+        sql_text = log["sql_text"]
+        target_nodes = log["target_nodes"].split(",")
+
+        succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
+
+        # Update replication log
+        for node in target_nodes:
+            last_error = errs.get(node) if node in errs else None
+            status = "REPLICATED" if node in succ else "PENDING"
+
+            ok, ierr = update_replication_log(log["id"], status=status, last_error=last_error)
+            if not ok:
+                recovery_summary["failed"].append(log)
+                continue
+
+        if fail:
+            recovery_summary["still_pending"].append(log)
+        else:
+            recovery_summary["recovered"].append(log)
+
+    return recovery_summary
 
 st.set_page_config(layout="wide")
 st.markdown("<h1 style='text-align: center;'>Distributed Database Management System</h1>", unsafe_allow_html=True)
@@ -258,6 +320,44 @@ with right_col:
 
     def build_delete_sql(tconst):
         return f"DELETE FROM titles WHERE tconst = '{tconst}'"
+    
+    def handle_replication(tconst, sql_text, targets, op_type):
+        if st.session_state["iso_level"] == "READ UNCOMMITTED":
+            replicate_before_commit = True
+        else:
+            replicate_before_commit = False
+
+        if replicate_before_commit:
+            succ, fail, errs = replicate_update(curr_node, targets, sql_text)
+            ok, ierr = insert_replication_log(
+                nodes[curr_node],
+                tconst,
+                sql_text,
+                op_type,
+                targets,
+                last_error=str(errs) if fail else None,
+                txn_stage="PRE_COMMIT"
+            )
+        else:
+            # Log only, to apply after commit
+            ok, ierr = insert_replication_log(
+                nodes[curr_node],
+                tconst,
+                sql_text,
+                op_type,
+                targets,
+                txn_stage="PRE_COMMIT"
+            )
+            succ, fail = [], []  # nothing replicated yet
+
+        if not ok:
+            st.error(f"Failed to insert replication log: {ierr}")
+
+        if replicate_before_commit:
+            if fail:
+                st.warning(f"Replication to {fail} failed; task saved for retry.")
+            else:
+                st.info(f"Replicated {op_type} to: {succ}")
 
     def show_surrounding_rows(conn, tconst):
         try:
@@ -370,41 +470,7 @@ with right_col:
                         if 'Node 1' not in targets:
                             targets.insert(0, 'Node 1')
 
-                        # --- OPTION C / Isolation-level aware replication ---
-                        if st.session_state["iso_level"] == "READ UNCOMMITTED":
-                            replicate_before_commit = True
-                        else:
-                            replicate_before_commit = False
-
-                        if replicate_before_commit:
-                            succ, fail, errs = replicate_update(curr_node, targets, sql_text)
-                            ok, ierr = insert_replication_log(
-                                nodes[curr_node],
-                                new_tconst,
-                                sql_text,
-                                'INSERT',
-                                targets,
-                                last_error=str(errs) if fail else None,
-                                txn_stage="PRE_COMMIT"
-                            )
-                        else:
-                            # Log only, apply after commit
-                            ok, ierr = insert_replication_log(
-                                nodes[curr_node],
-                                new_tconst,
-                                sql_text,
-                                'INSERT',
-                                targets,
-                                txn_stage="PRE_COMMIT"
-                            )
-
-                        if not ok:
-                            st.error(f"Failed to insert replication log: {ierr}")
-
-                        if replicate_before_commit and fail:
-                            st.warning(f"Replication to {fail} failed; task saved for retry.")
-                        elif replicate_before_commit:
-                            st.success(f"Replicated to: {succ}")
+                        handle_replication(tconst, sql_text, targets, 'INSERT')
 
                         st.session_state["txn_conn"] = conn
                         st.session_state["in_transaction"] = True
@@ -448,41 +514,7 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
 
-                                    # --- OPTION C / Isolation-level aware replication ---
-                                    if st.session_state["iso_level"] == "READ UNCOMMITTED":
-                                        replicate_before_commit = True
-                                    else:
-                                        replicate_before_commit = False
-
-                                    if replicate_before_commit:
-                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
-                                        ok, ierr = insert_replication_log(
-                                            nodes[curr_node],
-                                            upd_id,
-                                            update_sql,
-                                            'UPDATE',
-                                            targets,
-                                            last_error=str(errs) if fail else None,
-                                            txn_stage="PRE_COMMIT"
-                                        )
-                                    else:
-                                        # Log only, apply after commit
-                                        ok, ierr = insert_replication_log(
-                                            nodes[curr_node],
-                                            upd_id,
-                                            update_sql,
-                                            'UPDATE',
-                                            targets,
-                                            txn_stage="PRE_COMMIT"
-                                        )
-
-                                    if not ok:
-                                        st.error(f"Failed to insert replication log: {ierr}")
-
-                                    if replicate_before_commit and fail:
-                                        st.warning(f"Replication to {fail} failed; task saved for retry.")
-                                    elif replicate_before_commit:
-                                        st.info(f"Replicated update to: {succ}")
+                                    handle_replication(upd_id, update_sql, targets, 'UPDATE')
 
                                 if upd_year != 0:
                                     sql = "UPDATE titles SET startYear = %s WHERE tconst = %s"
@@ -496,41 +528,7 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
 
-                                        # --- OPTION C / Isolation-level aware replication ---
-                                        if st.session_state["iso_level"] == "READ UNCOMMITTED":
-                                            replicate_before_commit = True
-                                        else:
-                                            replicate_before_commit = False
-
-                                        if replicate_before_commit:
-                                            succ, fail, errs = replicate_update(curr_node, targets, update_sql)
-                                            ok, ierr = insert_replication_log(
-                                                nodes[curr_node],
-                                                upd_id,
-                                                update_sql,
-                                                'UPDATE',
-                                                targets,
-                                                last_error=str(errs) if fail else None,
-                                                txn_stage="PRE_COMMIT"
-                                            )
-                                        else:
-                                            # Log only, apply after commit
-                                            ok, ierr = insert_replication_log(
-                                                nodes[curr_node],
-                                                upd_id,
-                                                update_sql,
-                                                'UPDATE',
-                                                targets,
-                                                txn_stage="PRE_COMMIT"
-                                            )
-
-                                        if not ok:
-                                            st.error(f"Failed to insert replication log: {ierr}")
-
-                                        if replicate_before_commit and fail:
-                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
-                                        elif replicate_before_commit:
-                                            st.info(f"Replicated update to: {succ}")
+                                        handle_replication(upd_id, update_sql, targets, 'UPDATE')
 
                                 if upd_genre != "":
                                     sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
@@ -544,41 +542,7 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
 
-                                        # --- OPTION C / Isolation-level aware replication ---
-                                        if st.session_state["iso_level"] == "READ UNCOMMITTED":
-                                            replicate_before_commit = True
-                                        else:
-                                            replicate_before_commit = False
-
-                                        if replicate_before_commit:
-                                            succ, fail, errs = replicate_update(curr_node, targets, update_sql)
-                                            ok, ierr = insert_replication_log(
-                                                nodes[curr_node],
-                                                upd_id,
-                                                update_sql,
-                                                'UPDATE',
-                                                targets,
-                                                last_error=str(errs) if fail else None,
-                                                txn_stage="PRE_COMMIT"
-                                            )
-                                        else:
-                                            # Log only, apply after commit
-                                            ok, ierr = insert_replication_log(
-                                                nodes[curr_node],
-                                                upd_id,
-                                                update_sql,
-                                                'UPDATE',
-                                                targets,
-                                                txn_stage="PRE_COMMIT"
-                                            )
-
-                                        if not ok:
-                                            st.error(f"Failed to insert replication log: {ierr}")
-
-                                        if replicate_before_commit and fail:
-                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
-                                        elif replicate_before_commit:
-                                            st.info(f"Replicated update to: {succ}")
+                                        handle_replication(upd_id, update_sql, targets, 'UPDATE')
 
                                 st.session_state["txn_conn"] = conn
                                 st.session_state["in_transaction"] = True
@@ -615,41 +579,8 @@ with right_col:
                             targets = get_nodes_from_title(row["primaryTitle"])
                             if 'Node 1' not in targets:
                                 targets.insert(0, 'Node 1')
-                            # --- OPTION C / Isolation-level aware replication ---
-                            if st.session_state["iso_level"] == "READ UNCOMMITTED":
-                                replicate_before_commit = True
-                            else:
-                                replicate_before_commit = False
-
-                            if replicate_before_commit:
-                                succ, fail, errs = replicate_update(curr_node, targets, del_sql)
-                                ok, ierr = insert_replication_log(
-                                    nodes[curr_node],
-                                    del_id,
-                                    del_sql,
-                                    'DELETE',
-                                    targets,
-                                    last_error=str(errs) if fail else None,
-                                    txn_stage="PRE_COMMIT"
-                                )
-                            else:
-                                # Log only, apply after commit
-                                ok, ierr = insert_replication_log(
-                                    nodes[curr_node],
-                                    del_id,
-                                    del_sql,
-                                    'DELETE',
-                                    targets,
-                                    txn_stage="PRE_COMMIT"
-                                )
-
-                            if not ok:
-                                st.error(f"Failed to insert replication log: {ierr}")
-
-                            if replicate_before_commit and fail:
-                                st.warning(f"Replication to {fail} failed; task saved for retry.")
-                            elif replicate_before_commit:
-                                st.success(f"Replicated delete to: {succ}")
+                    
+                            handle_replication(del_id, del_sql, targets, 'DELETE')
 
                             st.session_state["txn_conn"] = conn
                             st.session_state["in_transaction"] = True
@@ -683,8 +614,11 @@ if st.session_state["in_transaction"]:
         conn = st.session_state["txn_conn"]
         conn.commit()
 
-        # --- BOUNDARY START: APPLY PENDING PRE_COMMIT LOGS POST-COMMIT ---
+        st.success("Transaction committed!")
+
+        # --- APPLY PENDING PRE_COMMIT LOGS POST-COMMIT ---
         pending_logs = fetch_pending_logs(nodes[curr_node], limit=1000)
+        applied_nodes = []
         for log in pending_logs:
             if log["txn_stage"] != "PRE_COMMIT":
                 continue
@@ -699,7 +633,12 @@ if st.session_state["in_transaction"]:
                 ok, ierr = update_replication_log(log["id"], status=status, last_error=last_error)
                 if not ok:
                     st.error(f"Failed to update replication log post-commit: {ierr}")
-        # --- BOUNDARY END ---
+
+            if succ:
+                applied_nodes.extend(succ)
+
+        if applied_nodes:
+            st.info(f"Applied pending pre-commit logs to: {applied_nodes}")
 
         # --- Insert POST_COMMIT log ---
         ok, ierr = insert_replication_log(
@@ -716,7 +655,6 @@ if st.session_state["in_transaction"]:
         # --- Reset session ---
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
-        st.success("Transaction committed!")
         st.rerun()
 
     if clicked_rollback:
