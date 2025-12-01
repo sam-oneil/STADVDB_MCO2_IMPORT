@@ -88,7 +88,7 @@ def get_conn(curr_node):
         cursor = conn.cursor()
 
         cursor.execute("SET AUTOCOMMIT = 0")
-        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
         cursor.execute("START TRANSACTION")
         
         # Set session-specific connection name for isolation
