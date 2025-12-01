@@ -1,6 +1,6 @@
 import streamlit as st
 import socket
-from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs
+from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs, update_replication_log
 import mysql.connector
 
 # --- Node Definitions ---
@@ -164,17 +164,11 @@ with left_col:
                     last_error = errs.get(node) if node in errs else None
                     status = "REPLICATED" if node in succ else "PENDING"
                     
-                    # Update log in DB
-                    insert_replication_log(
-                        nodes[curr_node],
-                        tconst,
-                        sql_text,
-                        log["op_type"],
-                        [node],
-                        last_error=last_error,
-                        txn_stage=log["txn_stage"]
-                    )
-                
+                    # Update the existing log instead of inserting a new one
+                    ok, ierr = update_replication_log(log["id"], status=status, last_error=last_error)
+                    if not ok:
+                        st.error(f"Failed to update replication log: {ierr}")
+
                 if fail:
                     still_pending.append(log)
             
