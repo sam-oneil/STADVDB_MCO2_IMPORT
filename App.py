@@ -268,7 +268,7 @@ with right_col:
         upd_id = st.text_input("ID", key="upd_id")
         upd_title = st.text_input("Title", key="upd_title")
         upd_titleType = st.text_input("Title Type", key="upd_titleType")
-        upd_year = st.number_input("Year", ...)
+        upd_year = st.number_input("Year", min_value=1900, value=2000, step=1, key="upd_year")
         upd_runtime = st.number_input("Runtime Minutes", min_value=0, max_value=1000, step=1, key="upd_runtime")
         upd_genre = st.text_input("Genre", key="upd_genre")
         
