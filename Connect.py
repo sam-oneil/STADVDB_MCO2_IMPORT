@@ -155,19 +155,17 @@ def update_replication_log(node_cfg, log_id, status, last_error=None):
     except Exception as e:
         return False, str(e)
     
-def update_replication_log(log_id, status, last_error=None):
+def update_replication_log(node_cfg, log_id, status, last_error=None):
     """
     Update an existing replication log row with new status, error, last_attempt, and increment retry_count.
     """
     try:
-        # Connect to local node DB (use Node 1 or pass as parameter)
-        local_cfg = nodes["Node 1"]  # you can adjust if needed
         conn = mysql.connector.connect(
-            host=local_cfg["host"],
-            port=local_cfg["port"],
-            user=local_cfg["user"],
-            password=local_cfg["password"],
-            database=local_cfg["database"]
+            host=node_cfg["host"],
+            port=node_cfg["port"],
+            user=node_cfg["user"],
+            password=node_cfg["password"],
+            database=node_cfg["database"]
         )
         cursor = conn.cursor()
         cursor.execute("""
