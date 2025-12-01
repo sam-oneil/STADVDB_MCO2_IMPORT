@@ -258,7 +258,7 @@ with right_col:
     with col1:
         st.markdown("<h3 style='text-align: center;'>Add Title</h3>", unsafe_allow_html=True) 
         add_title = st.text_input("Title", key="add_title")
-        add_titleType = st.text_input("Title Type", value="movie", key="add_titleType")
+        add_titleType = st.text_input("Title Type", key="add_titleType")
         add_year = st.number_input("Year", min_value=1900, max_value=2100, step=1, key="add_year")
         add_runtime = st.number_input("Runtime Minutes", min_value=0, max_value=1000, step=1, key="add_runtime")
         add_genre = st.text_input("Genre", key="add_genre")
@@ -268,7 +268,7 @@ with right_col:
         upd_id = st.text_input("ID", key="upd_id")
         upd_title = st.text_input("Title", key="upd_title")
         upd_titleType = st.text_input("Title Type", key="upd_titleType")
-        upd_year = st.number_input("Year", min_value=1900, value=2000, step=1, key="upd_year")
+        upd_year = st.number_input("Year", min_value=1900, value=1900, step=1, key="upd_year")
         upd_runtime = st.number_input("Runtime Minutes", min_value=0, max_value=1000, step=1, key="upd_runtime")
         upd_genre = st.text_input("Genre", key="upd_genre")
         
