@@ -8,7 +8,7 @@ PASSWORD = "nGERH3tcswdCpXr7vTYFDB4M"
 # --- Node Configurations ---
 nodes = {
     "Node 1": {"host": "10.2.14.93", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db"},
-    "Node 2": {"host": "10.2.14.99", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
+    "Node 2": {"host": "10.2.14.94", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db2"},
     "Node 3": {"host": "10.2.14.95", "port": 3306, "user": "dbuser", "password": "nGERH3tcswdCpXr7vTYFDB4M", "database": "titles_db3"},
 }
 
