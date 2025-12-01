@@ -11,7 +11,7 @@ host_node = {
     "STADVDB31-Server2": "Node 3"
 }
 
-curr_node = host_node.get(curr_host, "Unknown Node")
+curr_node = host_node.get(curr_host, "Unknown Node") 
 
 st.set_page_config(layout="wide")
 st.markdown("<h1 style='text-align: center;'>Distributed Database Management System</h1>", unsafe_allow_html=True)
@@ -42,14 +42,12 @@ if not st.session_state["auto_recovery_done"]:
 # --- Session State Initialization ---
 if "session_id" not in st.session_state:
     import uuid
-    # Generate a truly unique session ID for each browser tab
     st.session_state["session_id"] = str(uuid.uuid4())
-    # Force complete session isolation by clearing everything
     st.session_state["in_transaction"] = False
     st.session_state["txn_conn"] = None
     st.session_state["pending_replications"] = []
     st.session_state["id"] = None
-    st.session_state["read_conn_cache"] = {}  # Cache read connections per session
+    st.session_state["read_conn_cache"] = {}
 
 if "in_transaction" not in st.session_state:
     st.session_state["in_transaction"] = False
@@ -65,9 +63,6 @@ if "read_conn_cache" not in st.session_state:
 
 if "pending_replications" not in st.session_state:
     st.session_state["pending_replications"] = []
-
-# Display session info for debugging after all session state is initialized
-st.info(f"Session ID: {st.session_state['session_id'][:8]}...")  # Show first 8 chars for debugging
 
 # --- Helper Functions ---
 def new_conn(curr_node):
@@ -90,11 +85,8 @@ def get_conn(curr_node):
         cursor.execute("SET AUTOCOMMIT = 0")
         cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
         cursor.execute("START TRANSACTION")
-        
-        # Set session-specific connection name for isolation
         cursor.execute(f"SET @session_id = '{st.session_state['session_id']}'")
         cursor.close()
-
         st.session_state["in_transaction"] = True
         st.session_state["txn_conn"] = conn
         return conn
@@ -104,23 +96,18 @@ def get_read_conn(curr_node):
     conn = new_conn(curr_node)
     cursor = conn.cursor()
     
-    # Set session-specific connection identifier
     cursor.execute(f"SET @session_id = '{st.session_state['session_id']}'")
-    
-    # Always use READ COMMITTED - can only see committed changes from other sessions
     cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-    cursor.execute("SET AUTOCOMMIT = 1")  # Each read sees latest committed state
+    cursor.execute("SET AUTOCOMMIT = 1")
     
     cursor.close()
     return conn
 
 def get_session_read_conn(curr_node):
     """Get read connection that sees own uncommitted changes if in transaction"""
-    # If we're in a transaction, use the transaction connection to see our own changes
     if st.session_state["in_transaction"] and st.session_state["txn_conn"]:
         return st.session_state["txn_conn"]
     
-    # Otherwise, use a separate read connection that only sees committed data
     session_key = f"{curr_node}_read_committed"
     
     if session_key not in st.session_state["read_conn_cache"]:
@@ -147,121 +134,49 @@ with left_col:
     conn = connections[curr_node] 
 
     st.header("NODE STATUS")
-    cols = st.columns(len(nodes), gap="large")
     for i, (node_name, status) in enumerate(ping_results.items()):
-        with cols[i]:
-            st.subheader(node_name)
-            if status == "Reachable":
-                st.success("● Reachable")
-            else:
-                st.error("● Unreachable")
-
-    # --- Isolation Level ---
-    st.header("ISOLATION LEVEL")
-    st.info("Fixed to READ COMMITTED: See your own uncommitted changes, but not others'")
-    st.text("Current Level: READ COMMITTED")
-
-    # --- REPLICATION LOG ---
-    st.header("REPLICATION LOGS")
-
-    # Filter dropdown
-    log_stage = st.selectbox(
-        "Show logs for:",
-        ["BOTH", "PRE_COMMIT", "POST_COMMIT"],
-        index=0
-    )
-
-    try:
-        conn_debug = get_session_read_conn(curr_node)  # Use session-specific read connection
-        cursor = conn_debug.cursor(dictionary=True)
-
-        LIMIT_NUM = 5
-
-        # Build query based on filter
-        if log_stage == "BOTH":
-            cursor.execute(f"SELECT * FROM replication_log ORDER BY id DESC LIMIT {LIMIT_NUM}")
+        st.subheader(node_name)
+        if status == "Reachable":
+            st.success("● Reachable")
         else:
-            cursor.execute(
-                f"SELECT * FROM replication_log WHERE txn_stage = %s ORDER BY id DESC LIMIT {LIMIT_NUM}",
-                (log_stage,)
-            )
+            st.error("● Unreachable")
 
-        rows = cursor.fetchall()
-        st.dataframe(rows)
-
-        cursor.close()
-        # Don't close the connection - it's cached for the session
-    except Exception as e:
-        st.error(f"Failed to load replication log: {e}")
-
-    # --- Retry Pending Replications ---
-    st.header("PENDING REPLICATIONS")
-
-    # Fetch pending logs from local node
-    pending_logs = fetch_pending_logs(nodes[curr_node], limit=50)
-
-    if pending_logs:
-        st.warning(f"{len(pending_logs)} pending replication(s).")
-        
-        # Show pending logs in table
-        display_logs = [
-            {
-                "ID": log["id"],
-                "tconst": log["tconst"],
-                "Operation": log["op_type"],
-                "Targets": log["target_nodes"],
-                "Status": log["status"],
-                "Last Error": log["last_error"],
-                "Txn Stage": log["txn_stage"],
-                "Created At": log["created_at"],
-                "Last Attempt": log["last_attempt"]
-            }
-            for log in pending_logs
-        ]
-        st.dataframe(display_logs)
-
-        if st.button("Retry Pending Replications"):
-            for log in pending_logs:
-                tconst = log["tconst"]
-                sql_text = log["sql_text"]
-                target_nodes = log["target_nodes"].split(",")
+    #     if st.button("Retry Pending Replications"):
+    #         for log in pending_logs:
+    #             tconst = log["tconst"]
+    #             sql_text = log["sql_text"]
+    #             target_nodes = log["target_nodes"].split(",")
                 
-                succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
+    #             succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
                 
-                # Update the existing log entry based on overall result
-                if fail:
-                    # Still has failures, keep as PENDING with error details
-                    error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
-                    ok, ierr = update_replication_log(nodes[curr_node], log["id"], "PENDING", error_msg)
-                else:
-                    # All replications succeeded
-                    ok, ierr = update_replication_log(nodes[curr_node], log["id"], "REPLICATED", None)
+    #             if fail:
+    #                 error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
+    #                 ok, ierr = update_replication_log(nodes[curr_node], log["id"], "PENDING", error_msg)
+    #             else:
+    #                 ok, ierr = update_replication_log(nodes[curr_node], log["id"], "REPLICATED", None)
                 
-                if not ok:
-                    st.error(f"Failed to update replication log: {ierr}")
+    #             if not ok:
+    #                 st.error(f"Failed to update replication log: {ierr}")
             
-            st.success("Pending replications retried!")
-            st.session_state["refresh"] = not st.session_state.get("refresh", False)
+    #         st.success("Pending replications retried!")
+    #         st.session_state["refresh"] = not st.session_state.get("refresh", False)
 
-    else:
-        st.info("No pending replications.")
+    # else:
+    #     st.info("No pending replications.")
 
 with right_col:
     # --- CRUD Operations ---
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
 
-    # --- Helper Functions ---
-
     def get_row_by_tconst(tconst):
         try:
-            conn = get_session_read_conn(curr_node)  # Use session-specific read connection
+            conn = get_session_read_conn(curr_node)
             cursor = conn.cursor(dictionary=True)
 
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
             row = cursor.fetchone()
             cursor.close()
-            # Don't close the connection - it's cached for the session
 
             return row
         except Exception as e:
@@ -310,7 +225,6 @@ with right_col:
 
     def show_surrounding_rows(conn, tconst):
         try:
-            # Use session-specific read connection for proper isolation
             read_conn = get_session_read_conn(curr_node)
             cursor = read_conn.cursor(dictionary=True)
 
@@ -327,7 +241,6 @@ with right_col:
             cursor.execute(query, (lower, upper))
             rows = cursor.fetchall()
             cursor.close()
-            # Don't close the connection - it's cached for the session
 
             st.subheader("UPDATED DATABASE")
             st.dataframe(rows)
@@ -371,7 +284,6 @@ with right_col:
         
     col1, col2, col3 = st.columns(3, gap="large")
 
-    # Add
     with col1:
         if st.button("Add", type="primary", use_container_width=True):
             if add_title == "":
@@ -415,10 +327,8 @@ with right_col:
 
                         cursor.execute(sql, val)
 
-                        # Store replication info for after commit
                         sql_text = build_insert_sql(new_tconst, add_title, add_year, add_genre)
-                        targets = get_nodes_from_title(add_title)  # returns ['Node 1', 'Node 2'] or ['Node 1','Node 3']
-                        # Always ensure central Node 1 is included
+                        targets = get_nodes_from_title(add_title) 
                         if 'Node 1' not in targets:
                             targets.insert(0, 'Node 1')
 
@@ -438,7 +348,6 @@ with right_col:
                 except Exception as e:
                     st.error(f"Add failed: {e}")
     
-    # Update
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
@@ -447,7 +356,7 @@ with right_col:
                     if upd_id.strip() == "":
                         st.error("tconst cannot be empty")
                     else: 
-                        row = get_row_by_tconst(upd_id.strip()) # Check if record exists in the node
+                        row = get_row_by_tconst(upd_id.strip())
                         if not row:
                             st.error(f"No record found with ID {upd_id.strip()}")
                         
@@ -464,7 +373,6 @@ with right_col:
                                     val = (upd_title, upd_id)
                                     cursor.execute(sql, val)
                                     
-                                    # Store replication info for after commit
                                     update_sql = build_update_sql(upd_id, {"primaryTitle": upd_title})
                                     if update_sql:
                                         targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
@@ -483,7 +391,6 @@ with right_col:
                                     val = (upd_year, upd_id)
                                     cursor.execute(sql, val)
 
-                                    # Store replication info for after commit
                                     update_sql = build_update_sql(upd_id, {"startYear": upd_year})
                                     if update_sql:
                                         targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
@@ -502,7 +409,6 @@ with right_col:
                                     val = (upd_genre, upd_id)
                                     cursor.execute(sql, val)
 
-                                    # Store replication info for after commit
                                     update_sql = build_update_sql(upd_id, {"genres": upd_genre})
                                     if update_sql:
                                         targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
@@ -528,7 +434,6 @@ with right_col:
             except Exception as e:
                 st.error(f"Update failed: {e}")
 
-    # Delete
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
@@ -546,7 +451,6 @@ with right_col:
                             sql = "DELETE FROM titles WHERE tconst = %s"
                             cursor.execute(sql, (del_id,))
 
-                            # Store replication info for after commit
                             del_sql = build_delete_sql(del_id)
                             targets = get_nodes_from_title(row["primaryTitle"])
                             if 'Node 1' not in targets:
@@ -570,7 +474,7 @@ with right_col:
                 st.error(f"Delete failed: {e}")
 
 if st.session_state["id"]:
-    show_surrounding_rows(None, st.session_state["id"])  # Pass None since function uses its own read connection
+    show_surrounding_rows(None, st.session_state["id"])
 
 # --- Commit / Rollback ---
 if st.session_state["in_transaction"]:
@@ -591,11 +495,9 @@ if st.session_state["in_transaction"]:
         conn = st.session_state["txn_conn"]
         conn.commit()
 
-        # Now execute all pending replications after commit
         for replication in st.session_state["pending_replications"]:
             succ, fail, errs = replicate_update(curr_node, replication["targets"], replication["sql_text"])
             
-            # Log as POST_COMMIT since we already committed
             ok, ierr = insert_replication_log(
                 nodes[curr_node],
                 replication["tconst"],
@@ -613,10 +515,8 @@ if st.session_state["in_transaction"]:
             else:
                 st.success(f"Replicated {replication['op_type']} {replication['tconst']} to: {succ}")
 
-        # Clear pending replications
         st.session_state["pending_replications"] = []
 
-        # Log POST_COMMIT for this transaction
         ok, ierr = insert_replication_log(
             nodes[curr_node],
             st.session_state["id"],
@@ -630,9 +530,8 @@ if st.session_state["in_transaction"]:
 
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
-        conn.close()  # Close the connection to ensure proper isolation cleanup
+        conn.close() 
         
-        # Clean up read connections to ensure fresh reads after commit
         cleanup_session_connections()
         
         st.success("Transaction committed!")
@@ -641,15 +540,13 @@ if st.session_state["in_transaction"]:
     if clicked_rollback:
         conn = st.session_state["txn_conn"]
         conn.rollback()
-        conn.close()  # Close the connection to ensure proper isolation cleanup
+        conn.close() 
         
-        # Clear pending replications since transaction was rolled back
         st.session_state["pending_replications"] = []
         
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
         
-        # Clean up read connections to ensure fresh reads after rollback
         cleanup_session_connections()
         
         st.warning("Transaction rolled back!")
