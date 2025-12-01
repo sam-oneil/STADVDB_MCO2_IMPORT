@@ -40,6 +40,10 @@ if not st.session_state["auto_recovery_done"]:
         st.session_state["auto_recovery_done"] = True
 
 # --- Session State Initialization ---
+if "session_id" not in st.session_state:
+    import uuid
+    st.session_state["session_id"] = str(uuid.uuid4())
+
 if "in_transaction" not in st.session_state:
     st.session_state["in_transaction"] = False
 
@@ -76,11 +80,26 @@ def get_conn(curr_node):
         cursor.execute("SET AUTOCOMMIT = 0")
         cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
         cursor.execute("START TRANSACTION")
+        
+        # Set session-specific connection name for isolation
+        cursor.execute(f"SET @session_id = '{st.session_state['session_id']}'")
         cursor.close()
 
         st.session_state["in_transaction"] = True
         st.session_state["txn_conn"] = conn
         return conn
+
+def get_read_conn(curr_node):
+    """Get a separate read-only connection that respects isolation levels"""
+    conn = new_conn(curr_node)
+    cursor = conn.cursor()
+    
+    # Set the same isolation level for read operations
+    cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+    cursor.execute("START TRANSACTION")
+    cursor.close()
+    
+    return conn
     
 left_col, right_col = st.columns([1, 2], gap="large")
 
@@ -122,7 +141,7 @@ with left_col:
     )
 
     try:
-        conn_debug = new_conn(curr_node)
+        conn_debug = get_read_conn(curr_node)  # Use read connection for isolation
         cursor = conn_debug.cursor(dictionary=True)
 
         LIMIT_NUM = 5
@@ -204,13 +223,14 @@ with right_col:
 
     def get_row_by_tconst(tconst):
         try:
-            conn = get_conn(curr_node)
+            conn = get_read_conn(curr_node)  # Use read connection for proper isolation
             cursor = conn.cursor(dictionary=True)
 
             query = "SELECT * FROM titles WHERE tconst = %s"
             cursor.execute(query, (tconst,))
             row = cursor.fetchone()
             cursor.close()
+            conn.close()  # Close read connection
 
             return row
         except Exception as e:
@@ -259,7 +279,9 @@ with right_col:
 
     def show_surrounding_rows(conn, tconst):
         try:
-            cursor = conn.cursor(dictionary=True)
+            # Use read connection for proper isolation instead of passed connection
+            read_conn = get_read_conn(curr_node)
+            cursor = read_conn.cursor(dictionary=True)
 
             num = int(tconst[2:])
             lower = "tt" + str(max(num - 5, 1)).zfill(7)
@@ -274,6 +296,7 @@ with right_col:
             cursor.execute(query, (lower, upper))
             rows = cursor.fetchall()
             cursor.close()
+            read_conn.close()
 
             st.subheader("UPDATED DATABASE")
             st.dataframe(rows)
@@ -576,12 +599,14 @@ if st.session_state["in_transaction"]:
 
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
+        conn.close()  # Close the connection to ensure proper isolation cleanup
         st.success("Transaction committed!")
         st.rerun()
 
     if clicked_rollback:
         conn = st.session_state["txn_conn"]
         conn.rollback()
+        conn.close()  # Close the connection to ensure proper isolation cleanup
         
         # Clear pending replications since transaction was rolled back
         st.session_state["pending_replications"] = []
