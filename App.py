@@ -97,6 +97,21 @@ def get_read_conn(curr_node):
     cursor.close()
     return conn
 
+def read_table(curr_node, table_name, limit=200):
+    """Read rows from any table on the current node."""
+    try:
+        conn = get_session_read_conn(curr_node)
+        cursor = conn.cursor(dictionary=True)
+
+        query = f"SELECT * FROM {table_name} LIMIT %s"
+        cursor.execute(query, (limit,))
+        rows = cursor.fetchall()
+
+        cursor.close()
+        return rows, None
+    except Exception as e:
+        return None, str(e)
+
 def get_session_read_conn(curr_node):
     """Get read connection that sees own uncommitted changes if in transaction"""
     if st.session_state["in_transaction"] and st.session_state["txn_conn"]:
@@ -134,29 +149,6 @@ with left_col:
             st.success("● Reachable")
         else:
             st.error("● Unreachable")
-
-    #     if st.button("Retry Pending Replications"):
-    #         for log in pending_logs:
-    #             tconst = log["tconst"]
-    #             sql_text = log["sql_text"]
-    #             target_nodes = log["target_nodes"].split(",")
-                
-    #             succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
-                
-    #             if fail:
-    #                 error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
-    #                 ok, ierr = update_replication_log(nodes[curr_node], log["id"], "PENDING", error_msg)
-    #             else:
-    #                 ok, ierr = update_replication_log(nodes[curr_node], log["id"], "REPLICATED", None)
-                
-    #             if not ok:
-    #                 st.error(f"Failed to update replication log: {ierr}")
-            
-    #         st.success("Pending replications retried!")
-    #         st.session_state["refresh"] = not st.session_state.get("refresh", False)
-
-    # else:
-    #     st.info("No pending replications.")
 
 with right_col:
     # --- CRUD Operations ---
@@ -278,6 +270,7 @@ with right_col:
         
     col1, col2, col3 = st.columns(3, gap="large")
 
+    # Add
     with col1:
         if st.button("Add", type="primary", use_container_width=True):
             if add_title == "":
@@ -342,6 +335,7 @@ with right_col:
                 except Exception as e:
                     st.error(f"Add failed: {e}")
     
+    # Update
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
@@ -428,6 +422,7 @@ with right_col:
             except Exception as e:
                 st.error(f"Update failed: {e}")
 
+    # Delete
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
@@ -469,6 +464,21 @@ with right_col:
 
 if st.session_state["id"]:
     show_surrounding_rows(None, st.session_state["id"])
+
+# --- VIEW TABLES UI ---
+st.markdown("---")
+st.markdown("<h2 style='text-align: center;'> VIEW TABLES</h2>", unsafe_allow_html=True)
+
+with st.expander("View Table Data"):
+    table = st.selectbox("Select table:", ["titles", "replication_log"])
+    limit = st.number_input("Limit", min_value=10, max_value=5000, value=200)
+
+    if st.button("Load Table"):
+        rows, err = read_table(curr_node, table, limit)
+        if err:
+            st.error(err)
+        else:
+            st.dataframe(rows)
 
 # --- Commit / Rollback ---
 if st.session_state["in_transaction"]:
