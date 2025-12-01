@@ -38,6 +38,9 @@ if "iso_level" not in st.session_state:
 if "txn_conn" not in st.session_state:
     st.session_state["txn_conn"] = None
 
+if "pending_replications" not in st.session_state:
+    st.session_state["pending_replications"] = []
+
 # --- Helper Functions ---
 def new_conn(curr_node):
     cfg = nodes[curr_node]
@@ -162,22 +165,29 @@ with left_col:
                 
                 succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
                 
-                # Update replication log for each node
-                for node in target_nodes:
-                    last_error = errs.get(node) if node in errs else None
-                    status = "REPLICATED" if node in succ else "PENDING"
-                    
-                    # Update the existing log instead of inserting a new one
-                    ok, ierr = update_replication_log(log["id"], status=status, last_error=last_error)
-                    if not ok:
-                        st.error(f"Failed to update replication log: {ierr}")
-
+                # Update the existing log entry based on overall result
                 if fail:
-                    still_pending.append(log)
+                    # Still has failures, keep as PENDING with error details
+                    error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
+                    ok, ierr = update_replication_log(
+                        nodes[curr_node],
+                        log["id"],
+                        "PENDING",
+                        error_msg
+                    )
+                else:
+                    # All replications succeeded
+                    ok, ierr = update_replication_log(
+                        nodes[curr_node],
+                        log["id"],
+                        "REPLICATED",
+                        None
+                    )
+                
+                if not ok:
+                    st.error(f"Failed to update replication log: {ierr}")
             
-            st.success(f"Replication retried. Successful nodes: {succ}")
-            if still_pending:
-                st.warning(f"Still pending: {[l['tconst'] for l in still_pending]}")
+            st.success("Pending replications retried!")
             st.session_state["refresh"] = not st.session_state.get("refresh", False)
 
     else:
@@ -348,30 +358,19 @@ with right_col:
 
                         cursor.execute(sql, val)
 
-                        # replicate this INSERT to other nodes (idempotent SQL)
+                        # Store replication info for after commit
                         sql_text = build_insert_sql(new_tconst, add_title, add_year, add_genre)
                         targets = get_nodes_from_title(add_title)  # returns ['Node 1', 'Node 2'] or ['Node 1','Node 3']
                         # Always ensure central Node 1 is included
                         if 'Node 1' not in targets:
                             targets.insert(0, 'Node 1')
 
-                        succ, fail, errs = replicate_update(curr_node, targets, sql_text)
-                        ok, ierr = insert_replication_log(
-                            nodes[curr_node],
-                            new_tconst,
-                            sql_text,
-                            'INSERT',
-                            targets,
-                            last_error=str(errs) if fail else None,
-                            txn_stage="PRE_COMMIT"   # mark as pre-commit
-                        )
-                        if not ok:
-                            st.error(f"Failed to insert replication log: {ierr}")
-
-                        if fail:
-                            st.warning(f"Replication to {fail} failed; task saved for retry.")
-                        else:
-                            st.success(f"Replicated to: {succ}")
+                        st.session_state["pending_replications"].append({
+                            "tconst": new_tconst,
+                            "sql_text": sql_text,
+                            "targets": targets,
+                            "op_type": "INSERT"
+                        })
 
                         st.session_state["txn_conn"] = conn
                         st.session_state["in_transaction"] = True
@@ -408,96 +407,57 @@ with right_col:
                                     val = (upd_title, upd_id)
                                     cursor.execute(sql, val)
                                     
-                                    # replicate update
+                                    # Store replication info for after commit
                                     update_sql = build_update_sql(upd_id, {"primaryTitle": upd_title})
                                     if update_sql:
                                         targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
-                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
-
-                                        # --- PRE_COMMIT replication log ---
-                                        ok, ierr = insert_replication_log(
-                                            nodes[curr_node],
-                                            upd_id,
-                                            update_sql,
-                                            'UPDATE',
-                                            targets,
-                                            last_error=str(errs) if fail else None,
-                                            txn_stage="PRE_COMMIT"
-                                        )
-                                        if not ok:
-                                            st.error(f"Failed to insert replication log: {ierr}")
-
-                                        # Handle replication result
-                                        if succ:
-                                            st.info(f"Replicated update to: {succ}")
-                                        if fail:
-                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
+                                        
+                                        st.session_state["pending_replications"].append({
+                                            "tconst": upd_id,
+                                            "sql_text": update_sql,
+                                            "targets": targets,
+                                            "op_type": "UPDATE"
+                                        })
 
                                 if upd_year != 0:
                                     sql = "UPDATE titles SET startYear = %s WHERE tconst = %s"
                                     val = (upd_year, upd_id)
                                     cursor.execute(sql, val)
 
-                                    # replicate update
+                                    # Store replication info for after commit
                                     update_sql = build_update_sql(upd_id, {"startYear": upd_year})
                                     if update_sql:
                                         targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
-                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
-
-                                        # --- PRE_COMMIT replication log ---
-                                        ok, ierr = insert_replication_log(
-                                            nodes[curr_node],
-                                            upd_id,
-                                            update_sql,
-                                            'UPDATE',
-                                            targets,
-                                            last_error=str(errs) if fail else None,
-                                            txn_stage="PRE_COMMIT"
-                                        )
-                                        if not ok:
-                                            st.error(f"Failed to insert replication log: {ierr}")
-
-                                        # Handle replication result
-                                        if succ:
-                                            st.info(f"Replicated update to: {succ}")
-                                        if fail:
-                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
+                                        
+                                        st.session_state["pending_replications"].append({
+                                            "tconst": upd_id,
+                                            "sql_text": update_sql,
+                                            "targets": targets,
+                                            "op_type": "UPDATE"
+                                        })
 
                                 if upd_genre != "":
                                     sql = "UPDATE titles SET genres = %s WHERE tconst = %s"
                                     val = (upd_genre, upd_id)
                                     cursor.execute(sql, val)
 
-                                    # replicate update
+                                    # Store replication info for after commit
                                     update_sql = build_update_sql(upd_id, {"genres": upd_genre})
                                     if update_sql:
                                         targets = get_nodes_from_title(upd_title if upd_title != "" else row["primaryTitle"])
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
-                                        succ, fail, errs = replicate_update(curr_node, targets, update_sql)
-
-                                        # --- PRE_COMMIT replication log ---
-                                        ok, ierr = insert_replication_log(
-                                            nodes[curr_node],
-                                            upd_id,
-                                            update_sql,
-                                            'UPDATE',
-                                            targets,
-                                            last_error=str(errs) if fail else None,
-                                            txn_stage="PRE_COMMIT"
-                                        )
-                                        if not ok:
-                                            st.error(f"Failed to insert replication log: {ierr}")
-
-                                        # Handle replication result
-                                        if succ:
-                                            st.info(f"Replicated update to: {succ}")
-                                        if fail:
-                                            st.warning(f"Replication to {fail} failed; task saved for retry.")
+                                        
+                                        st.session_state["pending_replications"].append({
+                                            "tconst": upd_id,
+                                            "sql_text": update_sql,
+                                            "targets": targets,
+                                            "op_type": "UPDATE"
+                                        })
 
                                 st.session_state["txn_conn"] = conn
                                 st.session_state["in_transaction"] = True
@@ -529,31 +489,18 @@ with right_col:
                             sql = "DELETE FROM titles WHERE tconst = %s"
                             cursor.execute(sql, (del_id,))
 
-                            # replicate delete
+                            # Store replication info for after commit
                             del_sql = build_delete_sql(del_id)
                             targets = get_nodes_from_title(row["primaryTitle"])
                             if 'Node 1' not in targets:
                                 targets.insert(0, 'Node 1')
-                            succ, fail, errs = replicate_update(curr_node, targets, del_sql)
-
-                            # --- PRE_COMMIT replication log ---
-                            ok, ierr = insert_replication_log(
-                                nodes[curr_node],
-                                del_id,
-                                del_sql,
-                                'DELETE',
-                                targets,
-                                last_error=str(errs) if fail else None,
-                                txn_stage="PRE_COMMIT"
-                            )
-                            if not ok:
-                                st.error(f"Failed to insert replication log: {ierr}")
-
-                            # Handle replication result
-                            if fail:
-                                st.warning(f"Replication to {fail} failed; task saved for retry.")
-                            else:
-                                st.success(f"Replicated delete to: {succ}")
+                    
+                            st.session_state["pending_replications"].append({
+                                "tconst": del_id,
+                                "sql_text": del_sql,
+                                "targets": targets,
+                                "op_type": "DELETE"
+                            })
 
                             st.session_state["txn_conn"] = conn
                             st.session_state["in_transaction"] = True
@@ -587,6 +534,31 @@ if st.session_state["in_transaction"]:
         conn = st.session_state["txn_conn"]
         conn.commit()
 
+        # Now execute all pending replications after commit
+        for replication in st.session_state["pending_replications"]:
+            succ, fail, errs = replicate_update(curr_node, replication["targets"], replication["sql_text"])
+            
+            # Log as POST_COMMIT since we already committed
+            ok, ierr = insert_replication_log(
+                nodes[curr_node],
+                replication["tconst"],
+                replication["sql_text"],
+                replication["op_type"],
+                replication["targets"],
+                last_error=str(errs) if fail else None,
+                txn_stage="POST_COMMIT"
+            )
+            if not ok:
+                st.error(f"Failed to insert replication log: {ierr}")
+
+            if fail:
+                st.warning(f"Replication to {fail} failed for {replication['op_type']} {replication['tconst']}; task saved for retry.")
+            else:
+                st.success(f"Replicated {replication['op_type']} {replication['tconst']} to: {succ}")
+
+        # Clear pending replications
+        st.session_state["pending_replications"] = []
+
         # Log POST_COMMIT for this transaction
         ok, ierr = insert_replication_log(
             nodes[curr_node],
@@ -607,6 +579,10 @@ if st.session_state["in_transaction"]:
     if clicked_rollback:
         conn = st.session_state["txn_conn"]
         conn.rollback()
+        
+        # Clear pending replications since transaction was rolled back
+        st.session_state["pending_replications"] = []
+        
         st.session_state["in_transaction"] = False
         st.session_state["txn_conn"] = None
         st.warning("Transaction rolled back!")

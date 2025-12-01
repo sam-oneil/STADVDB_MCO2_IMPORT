@@ -119,6 +119,41 @@ def fetch_pending_logs(local_cfg, limit=100):
         return rows
     except Exception as e:
         return []
+
+def update_replication_log(node_cfg, log_id, status, last_error=None):
+    """
+    Update existing replication log entry status, retry count, and last attempt timestamp
+    """
+    try:
+        conn = mysql.connector.connect(
+            host=node_cfg["host"],
+            port=node_cfg["port"],
+            user=node_cfg["user"],
+            password=node_cfg["password"],
+            database=node_cfg["database"]
+        )
+        cursor = conn.cursor()
+        
+        # Update status, increment retry_count, and set last_attempt to current timestamp
+        if last_error is not None:
+            cursor.execute("""
+                UPDATE replication_log 
+                SET status = %s, last_error = %s, retry_count = retry_count + 1, last_attempt = NOW()
+                WHERE id = %s
+            """, (status, last_error, log_id))
+        else:
+            cursor.execute("""
+                UPDATE replication_log 
+                SET status = %s, last_error = NULL, retry_count = retry_count + 1, last_attempt = NOW()
+                WHERE id = %s
+            """, (status, log_id))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
     
 def update_replication_log(log_id, status, last_error=None):
     """
