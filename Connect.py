@@ -59,7 +59,7 @@ def replicate_update(source_node, target_nodes, sql_text):
                 connection_timeout=5
             )
             cursor_target = conn_target.cursor()
-            cursor_target.execute("SET AUTOCOMMIT = 1")
+            cursor_target.execute("SET AUTOCOMMIT = 0")
             cursor_target.execute(sql_text)
             conn_target.commit()
             cursor_target.close()
