@@ -470,7 +470,7 @@ with right_col:
                         if 'Node 1' not in targets:
                             targets.insert(0, 'Node 1')
 
-                        handle_replication(tconst, sql_text, targets, 'INSERT')
+                        handle_replication(new_tconst, sql_text, targets, 'INSERT')
 
                         st.session_state["txn_conn"] = conn
                         st.session_state["in_transaction"] = True
