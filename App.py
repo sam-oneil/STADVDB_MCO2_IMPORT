@@ -97,6 +97,21 @@ def get_read_conn(curr_node):
     cursor.close()
     return conn
 
+def read_table(curr_node, table_name, limit=200):
+    """Read rows from any table on the current node."""
+    try:
+        conn = get_session_read_conn(curr_node)
+        cursor = conn.cursor(dictionary=True)
+
+        query = f"SELECT * FROM {table_name} LIMIT %s"
+        cursor.execute(query, (limit,))
+        rows = cursor.fetchall()
+
+        cursor.close()
+        return rows, None
+    except Exception as e:
+        return None, str(e)
+
 def get_session_read_conn(curr_node):
     """Get read connection that sees own uncommitted changes if in transaction"""
     if st.session_state["in_transaction"] and st.session_state["txn_conn"]:
@@ -135,29 +150,6 @@ with left_col:
         else:
             st.error("● Unreachable")
 
-    #     if st.button("Retry Pending Replications"):
-    #         for log in pending_logs:
-    #             tconst = log["tconst"]
-    #             sql_text = log["sql_text"]
-    #             target_nodes = log["target_nodes"].split(",")
-                
-    #             succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
-                
-    #             if fail:
-    #                 error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
-    #                 ok, ierr = update_replication_log(nodes[curr_node], log["id"], "PENDING", error_msg)
-    #             else:
-    #                 ok, ierr = update_replication_log(nodes[curr_node], log["id"], "REPLICATED", None)
-                
-    #             if not ok:
-    #                 st.error(f"Failed to update replication log: {ierr}")
-            
-    #         st.success("Pending replications retried!")
-    #         st.session_state["refresh"] = not st.session_state.get("refresh", False)
-
-    # else:
-    #     st.info("No pending replications.")
-
 with right_col:
     # --- CRUD Operations ---
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
@@ -190,13 +182,17 @@ with right_col:
     def is_title_in_node(title: str, curr_node: str) -> bool:
         return curr_node in get_nodes_from_title(title)
     
-    def build_insert_sql(tconst, title, year, genre):
-        escaped_title = title.replace('"', '\"')
-        escaped_genre = genre.replace('"', '\"')
+    def build_insert_sql(tconst, titleType, title, year, runtime, genre):
+        title = title.replace('"', '\"')
+        genre = genre.replace('"', '\"')
+        titleType = titleType.replace('"', '\"')
+        runtime_sql = runtime if runtime > 0 else "\\\\N"
+
         return (
             "INSERT INTO titles (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres) "
-            f"VALUES ('{tconst}','movie',\"{escaped_title}\",\"{escaped_title}\",0,{int(year)},'\\\\N',\"{escaped_genre}\") "
-            "ON DUPLICATE KEY UPDATE primaryTitle=VALUES(primaryTitle), originalTitle=VALUES(originalTitle), startYear=VALUES(startYear), genres=VALUES(genres)"
+            f"VALUES ('{tconst}',\"{titleType}\",\"{title}\",\"{title}\",0,{int(year)},\"{runtime_sql}\",\"{genre}\") "
+            "ON DUPLICATE KEY UPDATE primaryTitle=VALUES(primaryTitle), originalTitle=VALUES(originalTitle), "
+            "startYear=VALUES(startYear), runtimeMinutes=VALUES(runtimeMinutes), genres=VALUES(genres)"
         )
 
     def build_update_sql(tconst, updates: dict):
@@ -262,14 +258,18 @@ with right_col:
     with col1:
         st.markdown("<h3 style='text-align: center;'>Add Title</h3>", unsafe_allow_html=True) 
         add_title = st.text_input("Title", key="add_title")
+        add_titleType = st.text_input("Title Type", value="movie", key="add_titleType")
         add_year = st.number_input("Year", min_value=1900, max_value=2100, step=1, key="add_year")
+        add_runtime = st.number_input("Runtime Minutes", min_value=0, max_value=1000, step=1, key="add_runtime")
         add_genre = st.text_input("Genre", key="add_genre")
              
     with col2:
         st.markdown("<h3 style='text-align: center;'>Update Title</h3>", unsafe_allow_html=True) 
         upd_id = st.text_input("ID", key="upd_id")
         upd_title = st.text_input("Title", key="upd_title")
-        upd_year = st.number_input("Year", min_value=1900, max_value=2100, step=1, key="upd_year")
+        upd_titleType = st.text_input("Title Type", key="upd_titleType")
+        upd_year = st.number_input("Year", ...)
+        upd_runtime = st.number_input("Runtime Minutes", min_value=0, max_value=1000, step=1, key="upd_runtime")
         upd_genre = st.text_input("Genre", key="upd_genre")
         
     with col3:
@@ -278,6 +278,7 @@ with right_col:
         
     col1, col2, col3 = st.columns(3, gap="large")
 
+    # Add
     with col1:
         if st.button("Add", type="primary", use_container_width=True):
             if add_title == "":
@@ -317,11 +318,12 @@ with right_col:
                             (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """
-                        val = (new_tconst, "movie", add_title, add_title, 0, add_year, "\\N", add_genre)
+                        runtime_val = add_runtime if add_runtime > 0 else "\\N"
+                        val = (new_tconst, add_titleType, add_title, add_title, 0, add_year, runtime_val, add_genre)
 
                         cursor.execute(sql, val)
 
-                        sql_text = build_insert_sql(new_tconst, add_title, add_year, add_genre)
+                        sql_text = build_insert_sql(new_tconst, add_titleType, add_title, add_year, add_runtime, add_genre)
                         targets = get_nodes_from_title(add_title) 
                         if 'Node 1' not in targets:
                             targets.insert(0, 'Node 1')
@@ -342,6 +344,7 @@ with right_col:
                 except Exception as e:
                     st.error(f"Add failed: {e}")
     
+    # Update
     with col2:
           if st.button("Update", type = "primary", width = "stretch"):
             try:
@@ -373,6 +376,42 @@ with right_col:
                                         if 'Node 1' not in targets:
                                             targets.insert(0, 'Node 1')
                                         
+                                        st.session_state["pending_replications"].append({
+                                            "tconst": upd_id,
+                                            "sql_text": update_sql,
+                                            "targets": targets,
+                                            "op_type": "UPDATE"
+                                        })
+
+                                if upd_titleType != "":
+                                    sql = "UPDATE titles SET titleType = %s WHERE tconst = %s"
+                                    val = (upd_titleType, upd_id)
+                                    cursor.execute(sql, val)
+
+                                    update_sql = build_update_sql(upd_id, {"titleType": upd_titleType})
+                                    if update_sql:
+                                        targets = get_nodes_from_title(effective_title)
+                                        if 'Node 1' not in targets:
+                                            targets.insert(0, 'Node 1')
+
+                                        st.session_state["pending_replications"].append({
+                                            "tconst": upd_id,
+                                            "sql_text": update_sql,
+                                            "targets": targets,
+                                            "op_type": "UPDATE"
+                                        })
+
+                                if upd_runtime != 0:
+                                    sql = "UPDATE titles SET runtimeMinutes = %s WHERE tconst = %s"
+                                    val = (upd_runtime, upd_id)
+                                    cursor.execute(sql, val)
+
+                                    update_sql = build_update_sql(upd_id, {"runtimeMinutes": upd_runtime})
+                                    if update_sql:
+                                        targets = get_nodes_from_title(effective_title)
+                                        if 'Node 1' not in targets:
+                                            targets.insert(0, 'Node 1')
+
                                         st.session_state["pending_replications"].append({
                                             "tconst": upd_id,
                                             "sql_text": update_sql,
@@ -428,6 +467,7 @@ with right_col:
             except Exception as e:
                 st.error(f"Update failed: {e}")
 
+    # Delete
     with col3:
         if st.button("Delete", type = "primary", width = "stretch"):
             try:
@@ -469,6 +509,21 @@ with right_col:
 
 if st.session_state["id"]:
     show_surrounding_rows(None, st.session_state["id"])
+
+# --- VIEW TABLES UI ---
+st.markdown("---")
+st.markdown("<h2 style='text-align: center;'> VIEW TABLES</h2>", unsafe_allow_html=True)
+
+with st.expander("View Table Data"):
+    table = st.selectbox("Select table:", ["titles", "replication_log"])
+    limit = st.number_input("Limit", min_value=10, max_value=5000, value=200)
+
+    if st.button("Load Table"):
+        rows, err = read_table(curr_node, table, limit)
+        if err:
+            st.error(err)
+        else:
+            st.dataframe(rows)
 
 # --- Commit / Rollback ---
 if st.session_state["in_transaction"]:
