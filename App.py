@@ -57,9 +57,6 @@ if "in_transaction" not in st.session_state:
 if "id" not in st.session_state:
     st.session_state["id"] = None
 
-if "iso_level" not in st.session_state:
-    st.session_state["iso_level"] = "READ UNCOMMITTED"
-
 if "txn_conn" not in st.session_state:
     st.session_state["txn_conn"] = None
 
@@ -91,7 +88,7 @@ def get_conn(curr_node):
         cursor = conn.cursor()
 
         cursor.execute("SET AUTOCOMMIT = 0")
-        cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
+        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
         cursor.execute("START TRANSACTION")
         
         # Set session-specific connection name for isolation
@@ -103,36 +100,29 @@ def get_conn(curr_node):
         return conn
 
 def get_read_conn(curr_node):
-    """Get a separate read-only connection that respects isolation levels"""
+    """Get a separate read-only connection for READ COMMITTED isolation"""
     conn = new_conn(curr_node)
     cursor = conn.cursor()
     
     # Set session-specific connection identifier
     cursor.execute(f"SET @session_id = '{st.session_state['session_id']}'")
     
-    # For different isolation levels, we need different connection behaviors
-    if st.session_state['iso_level'] == "READ UNCOMMITTED":
-        # Can see uncommitted changes from other sessions
-        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
-        cursor.execute("SET AUTOCOMMIT = 1")
-    elif st.session_state['iso_level'] == "READ COMMITTED":
-        # Can only see committed changes
-        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-        cursor.execute("SET AUTOCOMMIT = 1")
-    elif st.session_state['iso_level'] in ["REPEATABLE READ", "SERIALIZABLE"]:
-        # Start a read transaction to maintain consistency within the session
-        cursor.execute(f"SET SESSION TRANSACTION ISOLATION LEVEL {st.session_state['iso_level']}")
-        cursor.execute("SET AUTOCOMMIT = 0")
-        cursor.execute("START TRANSACTION")
+    # Always use READ COMMITTED - can only see committed changes from other sessions
+    cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+    cursor.execute("SET AUTOCOMMIT = 1")  # Each read sees latest committed state
     
     cursor.close()
     return conn
 
 def get_session_read_conn(curr_node):
-    """Get a session-specific read connection that persists for the session"""
-    session_key = f"{curr_node}_{st.session_state['iso_level']}"
+    """Get read connection that sees own uncommitted changes if in transaction"""
+    # If we're in a transaction, use the transaction connection to see our own changes
+    if st.session_state["in_transaction"] and st.session_state["txn_conn"]:
+        return st.session_state["txn_conn"]
     
-    # Check if we already have a connection for this session and isolation level
+    # Otherwise, use a separate read connection that only sees committed data
+    session_key = f"{curr_node}_read_committed"
+    
     if session_key not in st.session_state["read_conn_cache"]:
         conn = get_read_conn(curr_node)
         st.session_state["read_conn_cache"][session_key] = conn
@@ -140,7 +130,7 @@ def get_session_read_conn(curr_node):
     return st.session_state["read_conn_cache"][session_key]
 
 def cleanup_session_connections():
-    """Clean up session connections when isolation level changes or session ends"""
+    """Clean up session read connections"""
     for conn in st.session_state["read_conn_cache"].values():
         try:
             if conn.is_connected():
@@ -168,17 +158,8 @@ with left_col:
 
     # --- Isolation Level ---
     st.header("ISOLATION LEVEL")
-    isolation_levels = ["READ UNCOMMITTED", "READ COMMITTED", "REPEATABLE READ", "SERIALIZABLE"]
-    selected_level = st.selectbox("Transaction Isolation Level", isolation_levels, index=isolation_levels.index(st.session_state["iso_level"]))
-
-    if st.button("Confirm", type = "primary", width = "stretch"):
-        if conn:
-            # Clean up existing read connections when isolation level changes
-            cleanup_session_connections()
-            st.session_state["iso_level"] = selected_level
-            st.success(f"Isolation level confirmed: {st.session_state['iso_level']}")
-        else:
-            st.error("No connection to Node 1")
+    st.info("Fixed to READ COMMITTED: See your own uncommitted changes, but not others'")
+    st.text("Current Level: READ COMMITTED")
 
     # --- REPLICATION LOG ---
     st.header("REPLICATION LOGS")
