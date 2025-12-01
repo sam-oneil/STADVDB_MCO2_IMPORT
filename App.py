@@ -1,7 +1,9 @@
 import streamlit as st
 import socket
-from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs, update_replication_log
+from Connect import nodes, connect_node, replicate_update, insert_replication_log, fetch_pending_logs, update_replication_log, recover_pending_transactions
 import mysql.connector
+import threading
+import time
 
 # --- Node Definitions ---
 curr_host = socket.gethostname()
@@ -16,14 +18,27 @@ curr_node = host_node.get(curr_host, "Unknown Node")
 st.set_page_config(layout="wide")
 st.markdown("<h1 style='text-align: center;'>Distributed Database Management System</h1>", unsafe_allow_html=True)
 
+def background_retry(curr_node, interval=60):  # Refresh every 60 seconds
+    while True:
+        recover_pending_transactions(curr_node)  
+        time.sleep(interval)
+
+threading.Thread(target=background_retry, args=(curr_node,), daemon=True).start()
+
 if "refresh" not in st.session_state:
     st.session_state["refresh"] = False
 
-if curr_node == "Unknown Node":
-    st.error("This application must be run on one of the designated nodes.")
-    st.stop()
-else:
+if curr_node != "Unknown Node":
     st.success(f"Running on {curr_node}")
+
+    # --- Automatic Recovery on App Start ---
+    recovery_result = recover_pending_transactions(curr_node)
+    if recovery_result["recovered"]:
+        st.info(f"Recovered {len(recovery_result['recovered'])} pending replication(s).")
+    if recovery_result["still_pending"]:
+        st.warning(f"{len(recovery_result['still_pending'])} replication(s) still pending.")
+    if recovery_result["failed"]:
+        st.error(f"{len(recovery_result['failed'])} replication(s) failed to update logs.")
 
 # --- Session State Initialization ---
 if "in_transaction" not in st.session_state:

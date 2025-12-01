@@ -149,3 +149,35 @@ def update_replication_log(log_id, status, last_error=None):
         return True, None
     except Exception as e:
         return False, str(e)
+    
+def recover_pending_transactions(curr_node):
+    """
+    Automatically retry all PENDING replication logs for this node.
+    Returns a summary dict.
+    """
+    pending_logs = fetch_pending_logs(nodes[curr_node], limit=1000)  # fetch all
+    recovery_summary = {"recovered": [], "still_pending": [], "failed": []}
+
+    for log in pending_logs:
+        tconst = log["tconst"]
+        sql_text = log["sql_text"]
+        target_nodes = log["target_nodes"].split(",")
+
+        succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
+
+        # Update replication log
+        for node in target_nodes:
+            last_error = errs.get(node) if node in errs else None
+            status = "REPLICATED" if node in succ else "PENDING"
+
+            ok, ierr = update_replication_log(log["id"], status=status, last_error=last_error)
+            if not ok:
+                recovery_summary["failed"].append(log)
+                continue
+
+        if fail:
+            recovery_summary["still_pending"].append(log)
+        else:
+            recovery_summary["recovered"].append(log)
+
+    return recovery_summary
