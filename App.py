@@ -88,7 +88,7 @@ def get_conn(curr_node):
         cursor = conn.cursor()
 
         cursor.execute("SET AUTOCOMMIT = 0")
-        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+        cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         cursor.execute("START TRANSACTION")
         
         # Set session-specific connection name for isolation
@@ -108,7 +108,7 @@ def get_read_conn(curr_node):
     cursor.execute(f"SET @session_id = '{st.session_state['session_id']}'")
     
     # Always use READ COMMITTED - can only see committed changes from other sessions
-    cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+    cursor.execute("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
     cursor.execute("SET AUTOCOMMIT = 1")  # Each read sees latest committed state
     
     cursor.close()
