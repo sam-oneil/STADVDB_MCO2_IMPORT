@@ -150,6 +150,96 @@ with left_col:
         else:
             st.error("● Unreachable")
 
+    # --- Isolation Level ---
+    st.header("ISOLATION LEVEL")
+    st.info("Fixed to READ COMMITTED: See your own uncommitted changes, but not others'")
+    st.text("Current Level: READ COMMITTED")
+
+    # --- REPLICATION LOG ---
+    st.header("REPLICATION LOGS")
+
+    # Filter dropdown
+    log_stage = st.selectbox(
+        "Show logs for:",
+        ["BOTH", "PRE_COMMIT", "POST_COMMIT"],
+        index=0
+    )
+
+    try:
+        conn_debug = get_session_read_conn(curr_node)  # Use session-specific read connection
+        cursor = conn_debug.cursor(dictionary=True)
+
+        LIMIT_NUM = 5
+
+        # Build query based on filter
+        if log_stage == "BOTH":
+            cursor.execute(f"SELECT * FROM replication_log ORDER BY id DESC LIMIT {LIMIT_NUM}")
+        else:
+            cursor.execute(
+                f"SELECT * FROM replication_log WHERE txn_stage = %s ORDER BY id DESC LIMIT {LIMIT_NUM}",
+                (log_stage,)
+            )
+
+        rows = cursor.fetchall()
+        st.dataframe(rows)
+
+        cursor.close()
+        # Don't close the connection - it's cached for the session
+    except Exception as e:
+        st.error(f"Failed to load replication log: {e}")
+
+    # --- Retry Pending Replications ---
+    st.header("PENDING REPLICATIONS")
+
+    # Fetch pending logs from local node
+    pending_logs = fetch_pending_logs(nodes[curr_node], limit=50)
+
+    if pending_logs:
+        st.warning(f"{len(pending_logs)} pending replication(s).")
+        
+        # Show pending logs in table
+        display_logs = [
+            {
+                "ID": log["id"],
+                "tconst": log["tconst"],
+                "Operation": log["op_type"],
+                "Targets": log["target_nodes"],
+                "Status": log["status"],
+                "Last Error": log["last_error"],
+                "Txn Stage": log["txn_stage"],
+                "Created At": log["created_at"],
+                "Last Attempt": log["last_attempt"]
+            }
+            for log in pending_logs
+        ]
+        st.dataframe(display_logs)
+
+        if st.button("Retry Pending Replications"):
+            for log in pending_logs:
+                tconst = log["tconst"]
+                sql_text = log["sql_text"]
+                target_nodes = log["target_nodes"].split(",")
+                
+                succ, fail, errs = replicate_update(curr_node, target_nodes, sql_text)
+                
+                # Update the existing log entry based on overall result
+                if fail:
+                    # Still has failures, keep as PENDING with error details
+                    error_msg = "; ".join([f"{node}: {errs[node]}" for node in fail])
+                    ok, ierr = update_replication_log(nodes[curr_node], log["id"], "PENDING", error_msg)
+                else:
+                    # All replications succeeded
+                    ok, ierr = update_replication_log(nodes[curr_node], log["id"], "REPLICATED", None)
+                
+                if not ok:
+                    st.error(f"Failed to update replication log: {ierr}")
+            
+            st.success("Pending replications retried!")
+            st.session_state["refresh"] = not st.session_state.get("refresh", False)
+
+    else:
+        st.info("No pending replications.")
+
 with right_col:
     # --- CRUD Operations ---
     st.markdown("<h2 style='text-align: center;'>CRUD OPERATIONS</h2>", unsafe_allow_html=True) 
