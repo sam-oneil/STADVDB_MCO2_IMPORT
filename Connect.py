@@ -1,4 +1,5 @@
 import mysql.connector
+import time
 
 # --- DB Credentials ---
 USER = "dbuser"
@@ -34,10 +35,19 @@ def connect_node(nodes):
 
     return connections, ping_results
 
-# --- Replication Function ---
-def replicate_update(source_node, target_nodes, sql):
-    success, failure = [], []
+# --- Replication Helpers ---
+
+def replicate_update(source_node, target_nodes, sql_text):
+    """
+    Execute a raw SQL string on each target node (skips source_node).
+    Returns (success_nodes, failed_nodes, errors_dict)
+    """
+    success = []
+    failed = []
+    errors = {}
     for node in target_nodes:
+        if node == source_node:
+            continue
         try:
             cfg = nodes[node]
             conn_target = mysql.connector.connect(
@@ -45,14 +55,97 @@ def replicate_update(source_node, target_nodes, sql):
                 port=cfg["port"],
                 user=cfg["user"],
                 password=cfg["password"],
-                database=cfg["database"]
+                database=cfg["database"],
+                connection_timeout=5
             )
             cursor_target = conn_target.cursor()
-            cursor_target.execute(sql)
+            cursor_target.execute("SET AUTOCOMMIT = 1")
+            cursor_target.execute(sql_text)
             conn_target.commit()
             cursor_target.close()
             conn_target.close()
             success.append(node)
         except Exception as e:
-            failure.append(node)
-    return success, failure
+            print(f"Replication to {node} failed: {e}")
+            failed.append(node)
+            errors[node] = str(e)
+
+    return success, failed, errors
+
+def insert_replication_log(node_cfg, tconst, sql_text, op_type, target_nodes, last_error=None, txn_stage="PRE_COMMIT"):
+    try:
+        conn = mysql.connector.connect(
+            host=node_cfg["host"],
+            port=node_cfg["port"],
+            user=node_cfg["user"],
+            password=node_cfg["password"],
+            database=node_cfg["database"]
+        )
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO replication_log
+            (tconst, sql_text, op_type, target_nodes, status, last_error, txn_stage)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (
+            tconst,
+            sql_text,
+            op_type,
+            ",".join(target_nodes),
+            "PENDING" if last_error else "REPLICATED",
+            last_error,
+            txn_stage
+        ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def fetch_pending_logs(local_cfg, limit=100):
+    try:
+        conn = mysql.connector.connect(
+            host=local_cfg["host"],
+            port=local_cfg["port"],
+            user=local_cfg["user"],
+            password=local_cfg["password"],
+            database=local_cfg["database"]
+        )
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM replication_log WHERE status = 'PENDING' LIMIT %s", (limit,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return rows
+    except Exception as e:
+        return []
+    
+def update_replication_log(log_id, status, last_error=None):
+    """
+    Update an existing replication log row with new status, error, last_attempt, and increment retry_count.
+    """
+    try:
+        # Connect to local node DB (use Node 1 or pass as parameter)
+        local_cfg = nodes["Node 1"]  # you can adjust if needed
+        conn = mysql.connector.connect(
+            host=local_cfg["host"],
+            port=local_cfg["port"],
+            user=local_cfg["user"],
+            password=local_cfg["password"],
+            database=local_cfg["database"]
+        )
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE replication_log
+            SET status=%s,
+                last_error=%s,
+                last_attempt=NOW(),
+                retry_count=IFNULL(retry_count,0)+1
+            WHERE id=%s
+        """, (status, last_error, log_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True, None
+    except Exception as e:
+        return False, str(e)
