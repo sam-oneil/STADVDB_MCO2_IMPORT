@@ -22,12 +22,6 @@ if "refresh" not in st.session_state:
 if "auto_recovery_done" not in st.session_state:
     st.session_state["auto_recovery_done"] = False
 
-if curr_node == "Unknown Node":
-    st.error("This application must be run on one of the designated nodes.")
-    st.stop()
-else:
-    st.success(f"Running on {curr_node}")
-
 # --- Auto Recovery on Startup ---
 if not st.session_state["auto_recovery_done"]:
     try:
