@@ -611,8 +611,13 @@ if st.session_state["in_transaction"]:
             clicked_rollback = True
 
     if clicked_commit:
+        st.session_state["perform_commit"] = True
+        st.rerun()
+
+    if st.session_state.get("perform_commit", False):
         conn = st.session_state["txn_conn"]
         conn.commit()
+        st.session_state["perform_commit"] = False  # prevent infinite loop
 
         st.success("Transaction committed!")
 
