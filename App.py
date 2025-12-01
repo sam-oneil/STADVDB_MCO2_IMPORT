@@ -297,49 +297,74 @@ with right_col:
                     }
                     min_id, max_id = RANGES[curr_node]
 
-                    cursor.execute("""
-                        SELECT MAX(CAST(SUBSTRING(tconst, 3) AS UNSIGNED)) 
-                        FROM titles 
-                        WHERE CAST(SUBSTRING(tconst, 3) AS UNSIGNED) BETWEEN %s AND %s
-                    """, (min_id, max_id))
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            cursor.execute("""
+                                SELECT MAX(CAST(SUBSTRING(tconst, 3) AS UNSIGNED)) 
+                                FROM titles 
+                                WHERE CAST(SUBSTRING(tconst, 3) AS UNSIGNED) BETWEEN %s AND %s
+                                FOR UPDATE
+                            """, (min_id, max_id))
 
-                    result = cursor.fetchone()
-                    last_num = result[0] if result[0] else (min_id - 1)
-                    new_num = last_num + 1
+                            result = cursor.fetchone()
+                            last_num = result[0] if result[0] else (min_id - 1)
+                            new_num = last_num + 1
 
-                    if new_num > max_id:
-                        st.error("ID range exhausted for this node!")
-                        conn.close()
-                    else:
-                        new_tconst = "tt" + str(new_num).zfill(7)
+                            if new_num > max_id:
+                                st.error("ID range exhausted for this node!")
+                                cursor.close()
+                                conn.rollback()
+                                conn.close()
+                                break
 
-                        sql = """
-                            INSERT INTO titles 
-                            (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        """
-                        runtime_val = add_runtime if add_runtime > 0 else "\\N"
-                        val = (new_tconst, add_titleType, add_title, add_title, 0, add_year, runtime_val, add_genre)
+                            new_tconst = "tt" + str(new_num).zfill(7)
 
-                        cursor.execute(sql, val)
+                            # Try to insert - if successful, we're done
+                            sql = """
+                                INSERT INTO titles 
+                                (tconst, titleType, primaryTitle, originalTitle, isAdult, startYear, runtimeMinutes, genres)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """
+                            runtime_val = add_runtime if add_runtime > 0 else "\\N"
+                            val = (new_tconst, add_titleType, add_title, add_title, 0, add_year, runtime_val, add_genre)
 
-                        sql_text = build_insert_sql(new_tconst, add_titleType, add_title, add_year, add_runtime, add_genre)
-                        targets = get_nodes_from_title(add_title) 
-                        if 'Node 1' not in targets:
-                            targets.insert(0, 'Node 1')
+                            cursor.execute(sql, val)
 
-                        st.session_state["pending_replications"].append({
-                            "tconst": new_tconst,
-                            "sql_text": sql_text,
-                            "targets": targets,
-                            "op_type": "INSERT"
-                        })
+                            # Success! Store replication info for after commit
+                            sql_text = build_insert_sql(new_tconst, add_titleType, add_title, add_year, add_runtime, add_genre)
+                            targets = get_nodes_from_title(add_title) 
+                            if 'Node 1' not in targets:
+                                targets.insert(0, 'Node 1')
 
-                        st.session_state["txn_conn"] = conn
-                        st.session_state["in_transaction"] = True
-                        st.session_state["id"] = new_tconst
+                            st.session_state["pending_replications"].append({
+                                "tconst": new_tconst,
+                                "sql_text": sql_text,
+                                "targets": targets,
+                                "op_type": "INSERT"
+                            })
 
-                        st.success(f"'{add_title}' added successfully with ID {new_tconst}")
+                            st.session_state["txn_conn"] = conn
+                            st.session_state["in_transaction"] = True
+                            st.session_state["id"] = new_tconst
+
+                            st.success(f"'{add_title}' added successfully with ID {new_tconst}")
+                            break  # Success, exit retry loop
+
+                        except mysql.connector.IntegrityError as e:
+                            # Duplicate key error - ID collision occurred
+                            if attempt == max_retries - 1:
+                                # Final attempt failed
+                                st.error("System is busy with concurrent users. Please try again in a moment.")
+                                cursor.close()
+                                conn.rollback()
+                                conn.close()
+                            else:
+                                # Wait before retry with exponential backoff
+                                import time
+                                time.sleep(0.1 * (2 ** attempt))  # 0.1s, 0.2s, 0.4s
+                                st.info(f"Retrying... (attempt {attempt + 2}/{max_retries})")
+                                # Continue to next attempt without breaking transaction
 
                 except Exception as e:
                     st.error(f"Add failed: {e}")
