@@ -150,11 +150,6 @@ with left_col:
         else:
             st.error("● Unreachable")
 
-    # --- Isolation Level ---
-    st.header("ISOLATION LEVEL")
-    st.info("Fixed to READ COMMITTED: See your own uncommitted changes, but not others'")
-    st.text("Current Level: READ COMMITTED")
-
     # --- REPLICATION LOG ---
     st.header("REPLICATION LOGS")
 
